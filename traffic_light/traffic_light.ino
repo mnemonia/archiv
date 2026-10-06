@@ -119,6 +119,12 @@ public:
   }
 };
 
+// --- Traffic Light Duration Constants (ms) ---
+const unsigned long TRAFFIC_MAX_DURATION = 18000;
+const unsigned long TRAFFIC_RED_MIN_DURATION = 4000;
+const unsigned long TRAFFIC_YELLOW_MIN_DURATION = 1500;
+const unsigned long TRAFFIC_GREEN_MIN_DURATION = 4000;
+
 // --- Traffic Light State Classes ---
 class TrafficYellowState;
 class TrafficGreenState;
@@ -126,6 +132,7 @@ class TrafficGreenState;
 class TrafficRedState : public State {
 private:
   unsigned long previousMillis = 0;
+  unsigned long duration = 0;
 public:
   void enter(ControllerContext* ctx) override {
     sendProntoToPin(IR_SEND_PIN_2, offProntoData);
@@ -133,7 +140,12 @@ public:
 
     sendProntoToPin(IR_SEND_PIN_1, onProntoData);
     sendProntoToPin(IR_SEND_PIN_1, redProntoData);
-    Serial.println("Update RED");
+
+    duration = random(TRAFFIC_RED_MIN_DURATION, TRAFFIC_MAX_DURATION + 1);
+    Serial.print("Update RED (duration: ");
+    Serial.print(duration);
+    Serial.println(" ms)");
+
     previousMillis = millis();
   }
   void update(ControllerContext* ctx, unsigned long currentMillis) override;
@@ -142,6 +154,7 @@ public:
 class TrafficYellowState : public State {
 private:
   unsigned long previousMillis = 0;
+  unsigned long duration = 0;
   bool nextIsRed;
 public:
   TrafficYellowState(bool toRed)
@@ -153,7 +166,11 @@ public:
     sendProntoToPin(IR_SEND_PIN_2, onProntoData);
     sendProntoToPin(IR_SEND_PIN_2, whiteProntoData);
 
-    Serial.println("Update YELLOW");
+    duration = random(TRAFFIC_YELLOW_MIN_DURATION, TRAFFIC_MAX_DURATION + 1);
+    Serial.print("Update YELLOW (duration: ");
+    Serial.print(duration);
+    Serial.println(" ms)");
+
     previousMillis = millis();
   }
   void update(ControllerContext* ctx, unsigned long currentMillis) override;
@@ -162,6 +179,7 @@ public:
 class TrafficGreenState : public State {
 private:
   unsigned long previousMillis = 0;
+  unsigned long duration = 0;
 public:
   void enter(ControllerContext* ctx) override {
     sendProntoToPin(IR_SEND_PIN_1, offProntoData);
@@ -169,27 +187,32 @@ public:
 
     sendProntoToPin(IR_SEND_PIN_3, onProntoData);
     sendProntoToPin(IR_SEND_PIN_3, greenProntoData);
-    Serial.println("Update GREEN");
+
+    duration = random(TRAFFIC_GREEN_MIN_DURATION, TRAFFIC_MAX_DURATION + 1);
+    Serial.print("Update GREEN (duration: ");
+    Serial.print(duration);
+    Serial.println(" ms)");
+
     previousMillis = millis();
   }
   void update(ControllerContext* ctx, unsigned long currentMillis) override;
 };
 
 void TrafficRedState::update(ControllerContext* ctx, unsigned long currentMillis) {
-  if (currentMillis - previousMillis >= 4000) {
+  if (currentMillis - previousMillis >= duration) {
     ctx->transitionTo(new TrafficYellowState(false));
   }
 }
 
 void TrafficYellowState::update(ControllerContext* ctx, unsigned long currentMillis) {
-  if (currentMillis - previousMillis >= 1500) {
+  if (currentMillis - previousMillis >= duration) {
     if (nextIsRed) ctx->transitionTo(new TrafficRedState());
     else ctx->transitionTo(new TrafficGreenState());
   }
 }
 
 void TrafficGreenState::update(ControllerContext* ctx, unsigned long currentMillis) {
-  if (currentMillis - previousMillis >= 4000) {
+  if (currentMillis - previousMillis >= duration) {
     ctx->transitionTo(new TrafficYellowState(true));
   }
 }
@@ -301,6 +324,7 @@ void setup() {
   pinMode(SWITCH_PIN_RIGHT, INPUT_PULLUP);
 
   Serial.begin(115200);
+  randomSeed(analogRead(A0));
 
   irsend.begin(0);
 
