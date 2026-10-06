@@ -1,0 +1,420 @@
+/* ============================================================================
+   Virtual NeoPixel Strip (60 LEDs/m) - Stylesheet
+   ============================================================================ */
+
+:root {
+  --bg-primary: #0e1117;
+  --bg-panel: #161b22;
+  --border-color: #30363d;
+  --text-main: #f0f6fc;
+  --text-muted: #8b949e;
+  --accent-cyan: #38bdf8;
+  --accent-amber: #f59e0b;
+  --accent-green: #10b981;
+  --accent-red: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+.app-container {
+  max-width: 1360px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* --- Header / Status Bar --- */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+
+.logo-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--accent-green);
+  box-shadow: 0 0 10px var(--accent-green);
+  transition: all 0.3s ease;
+}
+
+.status-indicator.offline {
+  background-color: var(--accent-amber);
+  box-shadow: 0 0 10px var(--accent-amber);
+}
+
+h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.badge {
+  font-size: 0.75rem;
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: var(--accent-cyan);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+
+.telemetry {
+  display: flex;
+  gap: 16px;
+}
+
+.stat-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-family: monospace;
+}
+
+.stat-value.highlight {
+  color: var(--accent-amber);
+}
+
+.threshold-box .stat-value {
+  color: var(--accent-green);
+}
+
+/* --- Stage: Virtual Shelf & Physical LED Strip --- */
+.stage-section {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+}
+
+.shelf-backdrop {
+  position: relative;
+  width: 100%;
+  height: 380px;
+  background: radial-gradient(circle at 50% 40%, #1f1a14 0%, #110e0a 70%, #080604 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  transition: background 0.5s ease;
+}
+
+/* Wall Textures */
+.shelf-backdrop.walnut {
+  background: radial-gradient(circle at 50% 40%, #241c14 0%, #17110c 70%, #0a0806 100%);
+}
+
+.shelf-backdrop.oak {
+  background: radial-gradient(circle at 50% 40%, #2d2417 0%, #1c170f 70%, #0c0a06 100%);
+}
+
+.shelf-backdrop.concrete {
+  background: radial-gradient(circle at 50% 40%, #1e232a 0%, #14171c 70%, #0a0c0e 100%);
+}
+
+/* Canvas layers */
+#ambientGlowCanvas {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  width: 100%;
+  height: 280px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.strip-housing {
+  position: relative;
+  z-index: 2;
+  width: 96%;
+  height: 70px;
+  background: #121316;
+  border: 2px solid #2b2e35;
+  border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8), inset 0 2px 4px rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+#stripCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Optical Diffuser Overlay */
+.diffuser-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  transition: all 0.3s ease;
+}
+
+.diffuser-overlay.acrylic {
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 16px rgba(255, 255, 255, 0.2);
+}
+
+.diffuser-overlay.silicone {
+  background: rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: inset 0 0 24px rgba(255, 255, 255, 0.3);
+}
+
+.diffuser-overlay.none {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Shelf Edge Surface Reflection */
+.counter-surface {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 90px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.6));
+  border-top: 2px solid #3c2f21;
+  z-index: 1;
+}
+
+/* --- Competition HUD --- */
+.game-hud {
+  display: grid;
+  grid-template-columns: 240px 1fr 240px;
+  gap: 20px;
+  align-items: center;
+  padding: 16px 20px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+
+.player-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.player-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.player-tag {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.player-1 .player-tag { color: var(--accent-cyan); }
+.player-2 .player-tag { color: var(--accent-amber); }
+
+.key-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.arcade-btn {
+  padding: 18px 20px;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.4);
+}
+
+.arcade-btn:active, .arcade-btn.pressed {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+.btn-p1 {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  color: #fff;
+  border-top: 1px solid #7dd3fc;
+}
+
+.btn-p1:active, .btn-p1.pressed {
+  background: #0284c7;
+}
+
+.btn-p2 {
+  background: linear-gradient(135deg, #d97706, #b45309);
+  color: #fff;
+  border-top: 1px solid #fde68a;
+}
+
+.btn-p2:active, .btn-p2.pressed {
+  background: #d97706;
+}
+
+.zone-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.hud-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.mode-display {
+  text-align: center;
+}
+
+.mode-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.mode-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #fff;
+}
+
+.competition-controls {
+  display: flex;
+  gap: 12px;
+}
+
+.control-btn {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: #21262d;
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.control-btn:hover {
+  background: #30363d;
+}
+
+.control-btn.highlight-btn {
+  background: #238636;
+  border-color: #2ea043;
+}
+
+.control-btn.highlight-btn:hover {
+  background: #2ea043;
+}
+
+.control-btn.highlight-btn.active-game {
+  background: #da3633;
+  border-color: #f85149;
+}
+
+.game-instruction {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* --- Footer Settings --- */
+.footer-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: center;
+  padding: 14px 20px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+
+.setting-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+}
+
+.setting-group label {
+  color: var(--text-muted);
+}
+
+select {
+  padding: 6px 12px;
+  background: #21262d;
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+input[type="range"] {
+  cursor: pointer;
+}
+
+.dev-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.dev-note strong {
+  color: var(--accent-cyan);
+}
+

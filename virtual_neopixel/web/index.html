@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtual NeoPixel Strip (60 LEDs/m) - Bar Counter / Shelf Visualizer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header / Status Bar -->
+    <header class="header">
+      <div class="logo-title">
+        <span class="status-indicator" id="statusIndicator"></span>
+        <h1>Archiv Bar - Virtual NeoPixel Strip</h1>
+        <span class="badge">60 LEDs/m (WS2812B)</span>
+      </div>
+      <div class="telemetry">
+        <div class="stat-box">
+          <span class="stat-label">Source</span>
+          <span class="stat-value" id="sourceValue">Connecting...</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Frame Rate</span>
+          <span class="stat-value" id="fpsValue">0 FPS</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Ambient Lux</span>
+          <span class="stat-value highlight" id="luxValue">0%</span>
+        </div>
+        <div class="stat-box threshold-box" id="thresholdBox">
+          <span class="stat-label">Guard (&ge;35%)</span>
+          <span class="stat-value" id="guardStatus">ACTIVE</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Visual Stage: Virtual Bar Counter / Shelf -->
+    <main class="stage-section">
+      <div class="shelf-backdrop" id="shelfBackdrop">
+        <!-- Ambient Wall Glow / Reflection Layer -->
+        <canvas id="ambientGlowCanvas" width="1280" height="280"></canvas>
+
+        <!-- NeoPixel 60-LED Physical Strip Canvas -->
+        <div class="strip-housing" id="stripHousing">
+          <canvas id="stripCanvas" width="1280" height="90"></canvas>
+          <div class="diffuser-overlay" id="diffuserOverlay"></div>
+        </div>
+
+        <!-- Shelf Edge / Counter Surface Reflection -->
+        <div class="counter-surface" id="counterSurface"></div>
+      </div>
+    </main>
+
+    <!-- Interactive Game & Competition HUD -->
+    <section class="game-hud">
+      <div class="player-panel player-1">
+        <div class="player-header">
+          <span class="player-tag">Player 1 (Left)</span>
+          <span class="key-hint">Press [A]</span>
+        </div>
+        <button class="arcade-btn btn-p1" id="btnP1" type="button">P1 BUTTON</button>
+        <div class="zone-label">Cyan / Blue Forge</div>
+      </div>
+
+      <div class="hud-center">
+        <div class="mode-display">
+          <span class="mode-label">Active Mode</span>
+          <h2 class="mode-title" id="modeTitle">Breathing / Pulse</h2>
+        </div>
+        <div class="competition-controls">
+          <button class="control-btn" id="btnToggleMode" type="button">Toggle Mode [M]</button>
+          <button class="control-btn highlight-btn" id="btnToggleGame" type="button">Start Game [G]</button>
+        </div>
+        <div class="game-instruction" id="gameInstruction">
+          Double-click or press [G] to start competitive match!
+        </div>
+      </div>
+
+      <div class="player-panel player-2">
+        <div class="player-header">
+          <span class="player-tag">Player 2 (Right)</span>
+          <span class="key-hint">Press [L]</span>
+        </div>
+        <button class="arcade-btn btn-p2" id="btnP2" type="button">P2 BUTTON</button>
+        <div class="zone-label">Amber / Red Forge</div>
+      </div>
+    </section>
+
+    <!-- Visualizer & Optical Customization Settings -->
+    <footer class="footer-settings">
+      <div class="setting-group">
+        <label for="diffuserSelect">Optics & Diffuser:</label>
+        <select id="diffuserSelect">
+          <option value="acrylic">Milky Acrylic Channel (Realistic)</option>
+          <option value="silicone">Silicone Tube Dome</option>
+          <option value="none">Bare 5050 LEDs (Direct Die)</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label for="shelfTextureSelect">Mounting Surface:</label>
+        <select id="shelfTextureSelect">
+          <option value="walnut">Dark Walnut Bar Counter</option>
+          <option value="oak">Natural Oak Shelf</option>
+          <option value="concrete">Modern Slate Concrete</option>
+        </select>
+      </div>
+
+      <div class="setting-group">
+        <label for="bloomSlider">Wall Radiance:</label>
+        <input type="range" id="bloomSlider" min="0" max="100" value="85">
+      </div>
+
+      <div class="setting-group">
+        <span class="dev-note">
+          <strong>Backend:</strong>
+          Implementation A (Serial) &bull; Production: Implementation B (Adafruit_NeoPixel)
+        </span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
