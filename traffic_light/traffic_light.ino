@@ -120,7 +120,7 @@ public:
 };
 
 // --- Traffic Light Duration Constants (ms) ---
-const unsigned long TRAFFIC_MAX_DURATION = 18000;
+const unsigned long TRAFFIC_MAX_DURATION = 15000;
 const unsigned long TRAFFIC_RED_MIN_DURATION = 4000;
 const unsigned long TRAFFIC_YELLOW_MIN_DURATION = 1500;
 const unsigned long TRAFFIC_GREEN_MIN_DURATION = 4000;
