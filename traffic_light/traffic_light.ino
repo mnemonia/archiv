@@ -1,8 +1,34 @@
 #undef IR_SEND_PIN
 #include <IRremote.hpp>
 
-// --- Pin Definitions ---
-const int IR_RECEIVE_PIN = 2;
+// --- Switch Pin Definitions & Types ---
+// Connected to the outer terminals of an ON-OFF-ON 3-state toggle switch (Center terminal to GND)
+const int SWITCH_PIN_LEFT = 11;
+const int SWITCH_PIN_RIGHT = 12;
+
+enum SwitchPosition {
+  SWITCH_POS_UNKNOWN = -1,
+  SWITCH_POS_LEFT = 0,
+  SWITCH_POS_CENTER = 1,
+  SWITCH_POS_RIGHT = 2
+};
+
+SwitchPosition readSwitchPosition();
+//       3-STATE TOGGLE SWITCH (Bottom View)
+//        _______________________________
+//
+//       |       |       |       |       |
+//       | Terminal 1    Terminal 2      Terminal 3
+//       | (Left)        (Center/COM)    (Right)
+//
+//       |___|___|_______|___|___|_______|___|___|
+//           |               |               |
+//           |               |               |
+//           v               v               v
+//     [Digital Pin 2]    [ GND ]      [Digital Pin 3]
+//
+//
+// --- IR Send Pin Definitions ---
 const int IR_SEND_PIN_1 = 3;
 const int IR_SEND_PIN_2 = 5;
 const int IR_SEND_PIN_3 = 9;
@@ -34,15 +60,12 @@ const char blue4ProntoData[] PROGMEM = "0000 006D 0022 0000 015B 00A8 001A 0011 
 const char violett1ProntoData[] PROGMEM = "0000 006D 0022 0000 015B 00A8 001A 0011 001A 0012 001A 0011 001A 0012 0018 0012 001A 0011 001A 0012 0018 0012 001A 003B 001A 003D 0018 003D 001A 003B 001A 0012 0018 003D 001A 003B 001A 003B 001A 0012 0018 003D 001A 003D 0018 003B 001A 0012 001A 0012 0018 0012 0018 0012 001A 003D 0018 0012 0018 0012 001A 0011 001A 003D 0018 003D 001A 003B 001A 003D 0018 06C3 ";
 const char violett2ProntoData[] PROGMEM = "0000 006D 0022 0000 015B 00A7 001A 0012 0018 0012 001A 0011 001A 0012 001A 0011 001A 0011 001A 0012 001A 0011 001A 003D 0018 003D 0018 003D 001A 003B 001A 0011 001A 003D 0018 003D 001A 003B 001A 0012 0018 003D 001A 0012 0018 0012 0018 003D 001A 0012 0018 0012 001A 0011 001A 003D 0018 0012 001A 003B 001A 003B 001A 0012 0018 003D 001A 003B 001A 003D 0018 06C3 ";
 const char violett3ProntoData[] PROGMEM = "0000 006D 0022 0000 0159 00A8 001A 0011 001A 0012 0018 0012 001A 0011 001A 0012 001A 0011 001A 0012 0018 0012 001A 003B 001A 003B 001A 003B 001A 003D 0018 0012 001A 003B 001A 003B 001A 003D 0018 0012 001A 003B 001A 003D 0018 0012 001A 003B 001A 0012 0018 0012 001A 0011 001A 003D 0018 0012 0018 0012 001A 003B 001A 0012 0018 003D 001A 003B 001A 003D 0018 06C3 ";
+
 // Modes:
 const char flashProntoData[] PROGMEM = "0000 006D 0022 0000 015B 00A7 001A 0012 0018 0012 001A 0011 001A 0012 001A 0011 001A 0012 0018 0012 001A 0011 001A 003B 001A 003D 0018 003D 001A 003B 001A 0012 0018 003D 0018 003D 001A 003B 001A 003B 001A 003D 0018 0012 001A 003B 001A 0012 0018 0012 001A 0011 001A 0012 0018 0012 001A 0012 0018 003D 0018 0012 001A 003D 0018 003B 001A 003D 0018 003D 0018 06C3 ";
 const char strobeProntoData[] PROGMEM = "0000 006D 0022 0000 015B 00A8 001A 0011 001A 0012 0018 0012 001A 0011 001A 0012 0018 0012 001A 0011 001A 0012 0018 003D 001A 003B 001A 003B 001A 003D 0018 0012 001A 003B 001A 003B 001A 003D 0018 003D 001A 003B 001A 003B 001A 003D 0018 0014 0018 0011 001A 0012 001A 0012 0018 0012 0018 0012 001A 0011 001A 0012 001A 003B 001A 003D 0018 003D 0018 003D 001A 06C3 ";
 const char fadeProntoData[] PROGMEM = "0000 006D 0022 0000 015B 00A8 001A 0011 001A 0012 0018 0012 001A 0011 001A 0012 0018 0012 001A 0011 001A 0012 0018 003D 001A 003B 001A 003B 001A 003D 0018 0012 001A 003B 001A 003B 001A 003D 0018 003D 001A 003D 0018 0011 001A 0012 001A 003D 0018 0011 001A 0012 001A 0011 001A 0012 0018 0012 001A 003B 001A 003D 0018 0012 001A 003D 0018 003B 001A 003D 0018 06C3 ";
 const char smoothProntoData[] PROGMEM = "0000 006D 0022 0000 015B 00A7 001A 0012 0018 0012 001A 0011 001A 0012 001A 0011 001A 0012 0018 0012 001A 0011 001A 003D 0018 003D 001A 003B 001A 003B 001A 0012 001A 003B 001A 003B 001A 003D 0018 003D 001A 003B 001A 003B 001A 0012 001A 003B 001A 0012 0018 0012 001A 0011 001A 0012 0018 0012 001A 0012 0018 003D 001A 0012 0018 003B 001A 003D 0018 003D 001A 06C3 ";
-
-// State:
-const char modeAProntoData[] PROGMEM = "0000 006D 0022 0000 0159 00A8 001A 0012 0018 0012 001A 0012 0018 0012 0018 0012 001A 0012 0018 0012 001A 0011 001A 003D 0018 003D 0018 003F 0016 003D 001A 0012 0018 003D 0018 003F 0018 003D 0018 0012 0018 0014 0018 0012 0018 0014 0016 0014 0018 0012 0018 0014 0016 0014 0018 003D 0018 003F 0016 003F 0018 003D 0018 003D 0018 003F 0016 003F 0018 003D 0018 06C3 ";
-const char modeBProntoData[] PROGMEM = "0000 006D 0022 0000 015B 00A8 001A 0011 001A 0012 0018 0012 001A 0012 0018 0012 001A 0011 001A 0012 0018 0012 001A 003B 001A 003D 0018 003D 001A 003B 001A 0012 0018 003D 001A 003B 001A 003B 001A 003D 001A 0011 001A 0012 0018 0012 001A 0012 0018 0012 001A 0011 001A 0012 0018 0012 001A 003B 001A 003D 0018 003D 001A 003D 0018 003D 0018 003D 0018 003D 001A 06C3 ";
 
 IRsend irsend;
 
@@ -59,21 +82,6 @@ void sendProntoToAll(const char* prontoString) {
     irsend.sendPronto_P(onProntoData, NUMBER_OF_REPEATS);
     irsend.sendPronto_P(prontoString, NUMBER_OF_REPEATS);
   }
-}
-
-// Extract NEC Command directly from a standard Pronto String for fast matching
-uint8_t extractCommandFromPronto(const char* prontoStr) {
-  // Parses the 6th hex byte from the end of a standard NEC Pronto string
-  // For standard NEC Pronto format, this extracts the payload byte
-  uint32_t val = strtoul(&prontoStr[strlen(prontoStr) - 30], NULL, 16);
-  return (uint8_t)(val & 0xFF);
-}
-
-// Compare decoded IR signal against a Pronto String
-bool isProntoMatch(const char* prontoTarget) {
-  // Reads incoming NEC command and compares against target Pronto string payload
-  uint8_t targetCmd = extractCommandFromPronto(prontoTarget);
-  return (IrReceiver.decodedIRData.command == targetCmd);
 }
 
 // --- Forward Declarations & Context ---
@@ -111,7 +119,7 @@ public:
   }
 };
 
-// --- State Classes ---
+// --- Traffic Light State Classes ---
 class TrafficYellowState;
 class TrafficGreenState;
 
@@ -186,6 +194,7 @@ void TrafficGreenState::update(ControllerContext* ctx, unsigned long currentMill
   }
 }
 
+// --- Party State Classes ---
 class PartyStrobeState;
 class PartyFadeState;
 class PartySmoothState;
@@ -251,43 +260,95 @@ void PartySmoothState::update(ControllerContext* ctx, unsigned long currentMilli
   if (currentMillis - previousMillis >= 12000) ctx->transitionTo(new PartyFlashState());
 }
 
+// --- Concert State Classes ---
+class ConcertSmoothState : public State {
+public:
+  void enter(ControllerContext* ctx) override {
+    sendProntoToAll(smoothProntoData);
+    Serial.println("Concert SMOOTH");
+  }
+  void update(ControllerContext* ctx, unsigned long currentMillis) override {
+    // Remains in Concert Smooth mode until switch changes
+  }
+};
+
+// --- Switch Reading & Debounce ---
+
+SwitchPosition readSwitchPosition() {
+  int leftState = digitalRead(SWITCH_PIN_LEFT);
+  int rightState = digitalRead(SWITCH_PIN_RIGHT);
+
+  if (leftState == LOW) {
+    return SWITCH_POS_LEFT;
+  } else if (rightState == LOW) {
+    return SWITCH_POS_RIGHT;
+  } else {
+    return SWITCH_POS_CENTER;
+  }
+}
+
+SwitchPosition currentSwitchPos = SWITCH_POS_UNKNOWN;
+SwitchPosition lastReading = SWITCH_POS_UNKNOWN;
+unsigned long lastDebounceTime = 0;
+const unsigned long DEBOUNCE_DELAY = 50; // ms
+
 // --- Setup & Main Loop ---
 ControllerContext systemContext;
 
 void setup() {
+  // Enable internal pull-up resistors for both input pins
+  pinMode(SWITCH_PIN_LEFT, INPUT_PULLUP);
+  pinMode(SWITCH_PIN_RIGHT, INPUT_PULLUP);
+
   Serial.begin(115200);
 
-  IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
   irsend.begin(0);
 
   sendProntoToAll(onProntoData);
-  // Initialize into Traffic-Light Mode
-  systemContext.transitionTo(new TrafficRedState());
-  // Initialize into Party Mode
-  // systemContext.transitionTo(new PartyFadeState());
-  
+
+  // Initialize into mode based on initial switch position
+  currentSwitchPos = readSwitchPosition();
+  lastReading = currentSwitchPos;
+  lastDebounceTime = millis();
+
+  if (currentSwitchPos == SWITCH_POS_LEFT) {
+    Serial.println(F("Initial Switch -> LEFT: Traffic Light Mode"));
+    systemContext.transitionTo(new TrafficRedState());
+  } else if (currentSwitchPos == SWITCH_POS_RIGHT) {
+    Serial.println(F("Initial Switch -> RIGHT: Party Mode"));
+    systemContext.transitionTo(new PartyFlashState());
+  } else {
+    Serial.println(F("Initial Switch -> CENTER: Concert Smooth Mode"));
+    systemContext.transitionTo(new ConcertSmoothState());
+  }
 }
 
 void loop() {
   unsigned long currentMillis = millis();
 
-  // 1. Process Receiver Signals & Compare directly against Pronto Strings
-  if (IrReceiver.decode()) {
-    if (!(IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT)) {
-      //Serial.println("Got DATA");
-      //IrReceiver.compensateAndPrintIRResultAsPronto(&Serial);
-      // Compare incoming signal against Pronto string definitions
-      //if (isProntoMatch(modeAProntoData)) {
-      if (IrReceiver.decodedIRData.address == 0xEF00 && IrReceiver.decodedIRData.command == 0x0) {
-        Serial.println(F("Matched PRONTO_CMD_MODE_A -> Switching to Traffic Light"));
+  // 1. Debounced Switch Reading & State Transition
+  SwitchPosition reading = readSwitchPosition();
+
+  if (reading != lastReading) {
+    lastDebounceTime = currentMillis;
+    lastReading = reading;
+  }
+
+  if ((currentMillis - lastDebounceTime) >= DEBOUNCE_DELAY) {
+    if (reading != currentSwitchPos) {
+      currentSwitchPos = reading;
+
+      if (currentSwitchPos == SWITCH_POS_LEFT) {
+        Serial.println(F("Switch flipped to LEFT -> Traffic Light Mode"));
         systemContext.transitionTo(new TrafficRedState());
-//      } else if (isProntoMatch(modeBProntoData)) {
-      } else if (IrReceiver.decodedIRData.address == 0xEF00 && IrReceiver.decodedIRData.command == 0x1) {
-        Serial.println(F("Matched PRONTO_CMD_MODE_B -> Switching to Party Mode"));
+      } else if (currentSwitchPos == SWITCH_POS_RIGHT) {
+        Serial.println(F("Switch flipped to RIGHT -> Party Mode"));
         systemContext.transitionTo(new PartyFlashState());
+      } else {
+        Serial.println(F("Switch in CENTER -> Concert Smooth Mode"));
+        systemContext.transitionTo(new ConcertSmoothState());
       }
     }
-    IrReceiver.resume();
   }
 
   // 2. State Machine Update
