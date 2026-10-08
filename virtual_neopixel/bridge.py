@@ -152,12 +152,58 @@ def read_serial_loop(port_name, baud_rate):
             time.sleep(2.0)
 
 
+demo_state = {
+    "mode_idx": 0,
+    "hue": 0,          # 0..65535 matching Arduino RotaryColorKnob
+    "in_game": False
+}
+
+
+def hsv_to_rgb(hue_16, sat=255, val=255):
+    """Converts 16-bit hue (0..65535) to RGB, matching NeoPixel Driver ColorHSV math."""
+    h_idx = ((hue_16 // 10922) % 6)
+    rem = hue_16 % 10922
+    base = ((255 - sat) * val) >> 8
+    if h_idx == 0:
+        r = val
+        g = (((val - base) * rem) // 10922) + base
+        b = base
+    elif h_idx == 1:
+        r = (((val - base) * (10922 - rem)) // 10922) + base
+        g = val
+        b = base
+    elif h_idx == 2:
+        r = base
+        g = val
+        b = (((val - base) * rem) // 10922) + base
+    elif h_idx == 3:
+        r = base
+        g = (((val - base) * (10922 - rem)) // 10922) + base
+        b = val
+    elif h_idx == 4:
+        r = (((val - base) * rem) // 10922) + base
+        g = base
+        b = val
+    else:
+        r = val
+        g = base
+        b = (((val - base) * (10922 - rem)) // 10922) + base
+    return [max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))]
+
+
 def run_demo_simulation_loop():
     """Generates realistic test frames locally when no physical Arduino is connected."""
-    global current_frame
+    global current_frame, demo_state
     print("[Demo Mode] Generating local simulated NeoPixel frames...")
-    modes = ["Breathing / Pulse", "Twinkle / Sparkle", "Fire / Flame"]
-    mode_idx = 0
+    modes = [
+        "Breathing / Pulse",
+        "Twinkle / Sparkle",
+        "Fire / Flame",
+        "Chase / Marquee",
+        "Comet / Meteor",
+        "Scanner / Cylon",
+        "Color Wipe"
+    ]
     start_time = time.time()
     last_mode_switch = start_time
 
@@ -169,54 +215,125 @@ def run_demo_simulation_loop():
         now = time.time()
         elapsed = now - start_time
 
-        # Cycle modes every 12 seconds in demo mode
-        if now - last_mode_switch > 12.0:
-            mode_idx = (mode_idx + 1) % len(modes)
+        # Cycle modes every 15 seconds if unprompted in demo mode
+        if now - last_mode_switch > 15.0:
+            demo_state["mode_idx"] = (demo_state["mode_idx"] + 1) % len(modes)
             last_mode_switch = now
 
-        pixels = []
+        mode_idx = demo_state["mode_idx"]
         cur_mode = modes[mode_idx]
+        base_r, base_g, base_b = hsv_to_rgb(demo_state["hue"])
+        pixels = []
 
         if mode_idx == 0:
-            # 1. Breathing Warm-White
-            wave = (math.sin(elapsed * 1.8) + 1.0) * 0.5
-            factor = 0.40 + wave * 0.50
-            r = int(255 * factor)
-            g = int(148 * factor)
-            b = int(38 * factor)
+            # 1. Breathing / Pulse
+            wave = (math.sin(elapsed * 0.84) + 1.0) * 0.5
+            factor = 0.42 + wave * 0.40
+            r = int(base_r * factor)
+            g = int(base_g * factor)
+            b = int(base_b * factor)
             pixels = [[r, g, b] for _ in range(NUM_LEDS)]
 
         elif mode_idx == 1:
-            # 2. Twinkle Fairy Lights
+            # 2. Twinkle / Sparkle
             for i in range(NUM_LEDS):
                 twinkle_b[i] += twinkle_d[i]
-                if twinkle_b[i] >= 240:
-                    twinkle_d[i] = -random.randint(2, 5)
-                elif twinkle_b[i] <= 55:
-                    twinkle_d[i] = random.randint(2, 5)
-                val = max(55, min(255, twinkle_b[i]))
-                pixels.append([val, int(val * 0.74), int(val * 0.45)])
+                if twinkle_b[i] >= 220:
+                    twinkle_d[i] = -1
+                elif twinkle_b[i] <= 58:
+                    twinkle_d[i] = 1
+                br = max(58, min(220, twinkle_b[i]))
+                r = (base_r * br) >> 8
+                g = (base_g * br) >> 8
+                b = (base_b * br) >> 8
+                if br > 195:
+                    spark = (br - 195) * 2
+                    r = min(255, r + spark)
+                    g = min(255, g + spark)
+                    b = min(255, b + spark)
+                pixels.append([r, g, b])
 
-        else:
+        elif mode_idx == 2:
             # 3. Fire / Flame
             for i in range(NUM_LEDS):
-                cooldown = random.randint(2, 5)
-                heat[i] = max(75, heat[i] - cooldown)
+                cooldown = random.randint(1, 3)
+                heat[i] = max(78, heat[i] - cooldown)
             for k in range(NUM_LEDS - 1, 1, -1):
                 heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) // 3
-            if random.random() < 0.6:
+            if random.random() < 0.4:
                 idx = random.randint(0, NUM_LEDS - 1)
-                heat[idx] = min(255, heat[idx] + random.randint(90, 160))
+                heat[idx] = min(255, heat[idx] + random.randint(60, 110))
 
             for temp in heat:
                 t192 = int(temp * 191 / 255)
                 ramp = (t192 & 0x3F) << 2
                 if t192 > 0x80:
-                    pixels.append([255, 255, ramp])
+                    pixels.append([min(255, base_r + ramp), min(255, base_g + ramp), min(255, base_b + ramp)])
                 elif t192 > 0x40:
-                    pixels.append([255, ramp, 0])
+                    factor = t192 << 1
+                    pixels.append([(base_r * factor) >> 8, (base_g * factor) >> 8, (base_b * factor) >> 8])
                 else:
-                    pixels.append([ramp, 0, 0])
+                    factor = max(60, t192 << 2)
+                    pixels.append([(base_r * factor) >> 8, (base_g * factor) >> 8, (base_b * factor) >> 8])
+
+        elif mode_idx == 3:
+            # 4. Chase / Marquee
+            step = int(elapsed * 4.5) % 4
+            for i in range(NUM_LEDS):
+                if (i + step) % 4 == 0:
+                    pixels.append([min(255, base_r + 40), min(255, base_g + 40), min(255, base_b + 40)])
+                else:
+                    pixels.append([(base_r * 75) >> 8, (base_g * 75) >> 8, (base_b * 75) >> 8])
+
+        elif mode_idx == 4:
+            # 5. Comet / Meteor
+            sweep = (math.sin(elapsed * 0.5) + 1.0) * 0.5 * 59
+            for i in range(NUM_LEDS):
+                dist = abs(i - sweep)
+                if dist < 1.0:
+                    pixels.append([min(255, base_r + 160), min(255, base_g + 160), min(255, base_b + 160)])
+                elif dist < 10.0:
+                    glow = 1.0 - dist / 10.0
+                    pixels.append([int(base_r * glow), int(base_g * glow), int(base_b * glow)])
+                else:
+                    pixels.append([(base_r * 65) >> 8, (base_g * 65) >> 8, (base_b * 65) >> 8])
+
+        elif mode_idx == 5:
+            # 6. Scanner / Cylon
+            eye = 29.5 + 27.5 * math.sin(elapsed * 1.05)
+            for i in range(NUM_LEDS):
+                dist = abs(i - eye)
+                if dist < 1.0:
+                    pixels.append([min(255, base_r + 80), min(255, base_g + 80), min(255, base_b + 80)])
+                elif dist < 6.0:
+                    glow = 1.0 - dist / 6.0
+                    pixels.append([int(base_r * glow), int(base_g * glow), int(base_b * glow)])
+                else:
+                    pixels.append([(base_r * 60) >> 8, (base_g * 60) >> 8, (base_b * 60) >> 8])
+
+        else:
+            # 7. Color Wipe
+            wipe_idx = int(elapsed * 5.5) % NUM_LEDS
+            pal_idx = int(elapsed * 0.1) % 4
+            wipe_hue = (demo_state["hue"] + pal_idx * 10922) % 65536
+            wipe_col = hsv_to_rgb(wipe_hue)
+            for i in range(NUM_LEDS):
+                if i <= wipe_idx:
+                    pixels.append(wipe_col)
+                else:
+                    pixels.append([(base_r * 60) >> 8, (base_g * 60) >> 8, (base_b * 60) >> 8])
+
+        # Enforce Ambient Illumination Guard (>= 35%)
+        lum = calculate_luminance(pixels)
+        if lum < 35.0:
+            deficit = int((35.0 - lum) * 2.55)
+            boost_r = min(255, int(deficit * 1.48))
+            boost_g = min(255, int(deficit * 0.88))
+            boost_b = min(255, int(deficit * 0.28))
+            for p in pixels:
+                p[0] = min(255, p[0] + boost_r)
+                p[1] = min(255, p[1] + boost_g)
+                p[2] = min(255, p[2] + boost_b)
 
         with frame_lock:
             current_frame["leds"] = pixels
@@ -235,6 +352,7 @@ class VisualizerHTTPHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
 
     def do_GET(self):
+        global demo_state
         parsed = urllib.parse.urlparse(self.path)
 
         if parsed.path == "/api/frame":
@@ -254,12 +372,34 @@ class VisualizerHTTPHandler(SimpleHTTPRequestHandler):
             # Relay virtual keyboard buttons from browser back to Arduino Serial
             query = urllib.parse.parse_qs(parsed.query)
             key = query.get("key", [""])[0]
+
+            # Forward to Arduino hardware if connected
             if key and serial_handle and serial_handle.is_open:
                 try:
                     serial_handle.write(key.encode("ascii"))
                     print(f"[Input] Sent key '{key}' to Arduino Uno")
                 except Exception as ex:
                     print(f"[Input Error] {ex}")
+
+            # Also update local demo generator state
+            if key:
+                k = key.lower()
+                if k == 'm':
+                    demo_state["mode_idx"] = (demo_state["mode_idx"] + 1) % 7
+                    print(f"[Demo] Switched mode to {demo_state['mode_idx']}")
+                elif k == 'c':
+                    demo_state["hue"] = (demo_state["hue"] + 4000) % 65536
+                    print(f"[Demo] Stepped hue to {demo_state['hue']}")
+                elif k.startswith('h'):
+                    try:
+                        h_val = int(k[1:])
+                        demo_state["hue"] = max(0, min(65535, h_val))
+                        print(f"[Demo] Set hue to {demo_state['hue']}")
+                    except ValueError:
+                        pass
+                elif k == 'g':
+                    demo_state["in_game"] = not demo_state["in_game"]
+                    print(f"[Demo] Toggled game: {demo_state['in_game']}")
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -311,8 +451,9 @@ def main():
     print("  Controls in Browser:")
     print("    - [A] Key  : Player 1 Button")
     print("    - [L] Key  : Player 2 Button")
-    print("    - [M] Key  : Toggle Mode (Breathing -> Twinkle -> Fire)")
+    print("    - [M] Key  : Toggle Mode (Cycles 7 Modes)")
     print("    - [G] Key  : Start / Stop Competitive Game")
+    print("    - [C] Key  : Cycle / Step Rotary Base Color (Rainbow Palette)")
     print("=" * 72)
 
     try:

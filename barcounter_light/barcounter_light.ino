@@ -8,14 +8,18 @@
  *   - Compile-time Dual Implementation:
  *       Implementation A: Serial Streaming to Linux Virtual Strip Visualizer (Dev)
  *       Implementation B: Direct Hardware Adafruit_NeoPixel Output (Production)
+ *   - Global Rotary Knob Mood / Base-Color Control:
+ *       Analog Pin A3 reads potentiometer wiper (0-5V).
+ *       Maps smoothly to full 16-bit rainbow spectrum (0..65535).
+ *       Dynamically defines the initial- or mood-color for ALL modes!
  *   - 7 Ambient Visualization Modes (Ultra-slow, smooth, subtle, non-hectic):
- *       1. Breathing / Pulse (7.5s Meditative Warm-White 2700K Sine Breath)
- *       2. Twinkle / Sparkle (Slow Floating Candlelight & Starfield)
- *       3. Fire / Flame (Cozy Slow-Ember Hearth Fire)
- *       4. Chase / Marquee (Vintage Slow-Crawling Theater Marquee)
- *       5. Comet / Meteor (Gentle Gliding Shooting Star with Dissolving Tail)
- *       6. Scanner / Cylon (6.0s Smooth Larson Eye with Sine Deceleration)
- *       7. Color Wipe (11s Meditative Chromatic Roll)
+ *       1. Breathing / Pulse (7.5s Meditative Sine Breath in Rotary Base-Color)
+ *       2. Twinkle / Sparkle (Slow Floating Candlelight & Starfield in Rotary Base-Color)
+ *       3. Fire / Flame (Cozy Slow-Ember Hearth Fire in Rotary Flame Tint)
+ *       4. Chase / Marquee (Vintage Slow-Crawling Theater Marquee in Rotary Base-Color)
+ *       5. Comet / Meteor (Gentle Gliding Shooting Star in Rotary Base-Color)
+ *       6. Scanner / Cylon (6.0s Smooth Larson Eye in Rotary Base-Color)
+ *       7. Color Wipe (11s Meditative Chromatic Roll Anchored on Rotary Base-Color)
  *   - 7 Fast Competitive 2-Player 1-Button Games (One per mode):
  *       1. "Resonance Pulse" (Rhythm Wave Tug-of-War)
  *       2. "Sparkle Rush" (Nova Sparkle Reflex Deflector)
@@ -29,10 +33,11 @@
  *       guaranteeing room / bar counter illumination even during games.
  * 
  * Hardware Wiring:
- *   - Player 1 Button: Pin 2 <--> GND (uses internal pull-up)
- *   - Player 2 Button: Pin 4 <--> GND (uses internal pull-up)
- *   - Mode Switch:     Pin 7 <--> GND (uses internal pull-up)
- *   - Physical Strip:  Pin 6 <--> NeoPixel DIN (Production Implementation B)
+ *   - Rotary Color Knob: Pin A3 <--> Potentiometer Wiper (Outer pins to 5V and GND)
+ *   - Player 1 Button:   Pin 2  <--> GND (uses internal pull-up)
+ *   - Player 2 Button:   Pin 4  <--> GND (uses internal pull-up)
+ *   - Mode Switch:       Pin 7  <--> GND (uses internal pull-up)
+ *   - Physical Strip:    Pin 6  <--> NeoPixel DIN (Production Implementation B)
  * ============================================================================
  */
 
@@ -43,7 +48,7 @@
 #define BACKEND_ADAFRUIT_REAL    1  // Implementation B: Drive physical WS2812B strip via Adafruit library
 
 // >>> CONFIGURE ACTIVE TARGET HERE <<<
-#define STRIP_BACKEND            BACKEND_VIRTUAL_SERIAL
+#define STRIP_BACKEND            BACKEND_ADAFRUIT_REAL
 
 // ============================================================================
 // 2. Hardware Pin & Strip Configuration
@@ -51,6 +56,7 @@
 #define NUM_LEDS                 60     // 60 LEDs per meter
 #define LED_PIN                  6      // Output data pin for physical strip (Backend B)
 
+#define PIN_COLOR_KNOB           A3     // Rotary knob potentiometer wiper for global color setting
 #define PIN_BTN_P1               2      // Player 1 input button (active LOW)
 #define PIN_BTN_P2               4      // Player 2 input button (active LOW)
 #define PIN_BTN_MODE             7      // Mode toggle button (active LOW)
@@ -149,7 +155,7 @@ public:
     }
     uint16_t avgLuminance = totalLuminance / NUM_LEDS;
 
-    // If below required threshold, boost all pixels smoothly with warm white
+    // If below required threshold, boost all pixels smoothly
     if (avgLuminance < MIN_LUMEN_THRESHOLD) {
       uint16_t deficit = MIN_LUMEN_THRESHOLD - avgLuminance;
       // Normalized warm baseline boost (0.299*1.48 + 0.587*0.88 + 0.114*0.28 ≈ 1.0)
@@ -198,12 +204,117 @@ public:
   static uint32_t Color(uint8_t r, uint8_t g, uint8_t b) {
     return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
   }
+
+  static uint32_t ColorHSV(uint16_t hue, uint8_t sat = 255, uint8_t val = 255) {
+#if (STRIP_BACKEND == BACKEND_ADAFRUIT_REAL)
+    return Adafruit_NeoPixel::ColorHSV(hue, sat, val);
+#else
+    // Standalone compact HSV to RGB converter for Backend A
+    uint8_t r, g, b;
+    uint8_t base = ((255 - sat) * val) >> 8;
+    switch ((hue / 10922) % 6) {
+      case 0:
+        r = val;
+        g = (((val - base) * (hue % 10922)) / 10922) + base;
+        b = base;
+        break;
+      case 1:
+        r = (((val - base) * (10922 - (hue % 10922))) / 10922) + base;
+        g = val;
+        b = base;
+        break;
+      case 2:
+        r = base;
+        g = val;
+        b = (((val - base) * (hue % 10922)) / 10922) + base;
+        break;
+      case 3:
+        r = base;
+        g = (((val - base) * (10922 - (hue % 10922))) / 10922) + base;
+        b = val;
+        break;
+      case 4:
+        r = (((val - base) * (hue % 10922)) / 10922) + base;
+        g = base;
+        b = val;
+        break;
+      default:
+        r = val;
+        g = base;
+        b = (((val - base) * (10922 - (hue % 10922))) / 10922) + base;
+        break;
+    }
+    return Color(r, g, b);
+#endif
+  }
 };
 
 NeoPixelDriver strip;
 
 // ============================================================================
-// 4. Debounced Input Manager (Two Players + Mode Switch)
+// 4. Global Rotary Knob Controller (Rainbow Palette Mood / Base-Color)
+// ============================================================================
+class RotaryColorKnob {
+private:
+  uint8_t pin;
+  int lastRaw;
+  uint16_t currentHue;
+  uint8_t currentR, currentG, currentB;
+  unsigned long lastReadTime;
+
+public:
+  RotaryColorKnob(uint8_t p)
+    : pin(p), lastRaw(-1), currentHue(0), currentR(255), currentG(0), currentB(0), lastReadTime(0) {}
+
+  void begin() {
+    pinMode(pin, INPUT);
+    update(true);
+  }
+
+  void update(bool force = false) {
+    unsigned long now = millis();
+    if (!force && now - lastReadTime < 35) return; // 35ms update
+    lastReadTime = now;
+
+    int raw = analogRead(pin);
+    // Hysteresis of 4 ADC counts to prevent analog jitter
+    if (force || abs(raw - lastRaw) > 4) {
+      lastRaw = raw;
+      // Map 0..1023 smoothly across the full rainbow: 0..65535
+      currentHue = (uint16_t)(((uint32_t)raw * 65535UL) / 1023UL);
+      uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
+      currentR = (uint8_t)(rgb >> 16);
+      currentG = (uint8_t)(rgb >> 8);
+      currentB = (uint8_t)rgb;
+    }
+  }
+
+  uint16_t getHue() const { return currentHue; }
+  uint8_t getR() const { return currentR; }
+  uint8_t getG() const { return currentG; }
+  uint8_t getB() const { return currentB; }
+  uint32_t getRGB() const {
+    return ((uint32_t)currentR << 16) | ((uint32_t)currentG << 8) | currentB;
+  }
+
+  void setHue(uint16_t hue) {
+    currentHue = hue;
+    uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
+    currentR = (uint8_t)(rgb >> 16);
+    currentG = (uint8_t)(rgb >> 8);
+    currentB = (uint8_t)rgb;
+  }
+
+  void stepHue(int16_t delta) {
+    setHue(currentHue + delta);
+  }
+};
+
+RotaryColorKnob rotaryKnob(PIN_COLOR_KNOB);
+uint32_t global_color = NeoPixelDriver::Color(255, 0, 0);
+
+// ============================================================================
+// 5. Debounced Input Manager (Two Players + Mode Switch)
 // ============================================================================
 class Button {
 private:
@@ -260,7 +371,7 @@ Button btnP2(PIN_BTN_P2);
 Button btnMode(PIN_BTN_MODE);
 
 // ============================================================================
-// 5. System Modes & States
+// 6. System Modes & States
 // ============================================================================
 enum SystemMode {
   MODE_BREATHING_PULSE = 0,
@@ -277,7 +388,7 @@ SystemMode currentMode = MODE_BREATHING_PULSE;
 bool inGameMode = false;
 
 // ============================================================================
-// 6. Mode 1: Breathing / Pulse (7.5s Meditative Breath) & "Resonance Pulse"
+// 7. Mode 1: Breathing / Pulse & "Resonance Pulse" Game
 // ============================================================================
 class BreathingPulseController {
 private:
@@ -308,11 +419,11 @@ public:
     float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
 
     if (!inGameMode) {
-      // Ambient: Ultra-slow, very subtle warm-white breathing (42% to 82%)
+      // Ambient: Breathing pulse in the Rotary Knob Mood-Color!
       float factor = 0.42f + wave * 0.40f;
-      uint8_t r = (uint8_t)(255 * factor);
-      uint8_t g = (uint8_t)(148 * factor);
-      uint8_t b = (uint8_t)(38 * factor);
+      uint8_t r = (uint8_t)(rotaryKnob.getR() * factor);
+      uint8_t g = (uint8_t)(rotaryKnob.getG() * factor);
+      uint8_t b = (uint8_t)(rotaryKnob.getB() * factor);
       uint32_t color = NeoPixelDriver::Color(r, g, b);
 
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
@@ -357,9 +468,13 @@ public:
         }
       }
 
+      // Background ambient floor follows rotary base color
       float baseFactor = 0.35f + wave * 0.20f;
-      uint32_t baseWarm = NeoPixelDriver::Color((uint8_t)(255 * baseFactor), (uint8_t)(140 * baseFactor), (uint8_t)(35 * baseFactor));
-      for (uint16_t i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, baseWarm);
+      uint8_t rBase = (uint8_t)(rotaryKnob.getR() * baseFactor);
+      uint8_t gBase = (uint8_t)(rotaryKnob.getG() * baseFactor);
+      uint8_t bBase = (uint8_t)(rotaryKnob.getB() * baseFactor);
+      uint32_t baseCol = NeoPixelDriver::Color(rBase, gBase, bBase);
+      for (uint16_t i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, baseCol);
 
       for (int i = 0; i <= nexusPosition; i++) {
         int dist = nexusPosition - i;
@@ -382,7 +497,7 @@ public:
 BreathingPulseController pulseMode;
 
 // ============================================================================
-// 7. Mode 2: Twinkle / Sparkle (Slow Floating Candlelight) & "Sparkle Rush"
+// 8. Mode 2: Twinkle / Sparkle & "Sparkle Rush" Game
 // ============================================================================
 class TwinkleSparkleController {
 private:
@@ -410,10 +525,10 @@ public:
   }
 
   void update(unsigned long currentMillis) {
-    if (currentMillis - lastUpdate < (inGameMode ? 20 : 50)) return; // 50ms slow ambient!
+    if (currentMillis - lastUpdate < (inGameMode ? 20 : 50)) return;
     lastUpdate = currentMillis;
 
-    // Ambient: Gentle drifting starfield, unhurried delta
+    // Drifting starfield
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
       int nextB = (int)twinkleBrightness[i] + twinkleDelta[i];
       if (nextB >= 220) {
@@ -425,9 +540,24 @@ public:
     }
 
     if (!inGameMode) {
+      // Ambient: Starry shimmer tinted by the Rotary Knob Mood-Color!
+      uint8_t baseR = rotaryKnob.getR();
+      uint8_t baseG = rotaryKnob.getG();
+      uint8_t baseB = rotaryKnob.getB();
+
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
-        uint8_t b = twinkleBrightness[i];
-        strip.setPixelColor(i, NeoPixelDriver::Color(b, (b * 190) >> 8, (b * 115) >> 8));
+        uint8_t br = twinkleBrightness[i];
+        uint8_t r = (uint8_t)(((uint16_t)baseR * br) >> 8);
+        uint8_t g = (uint8_t)(((uint16_t)baseG * br) >> 8);
+        uint8_t b = (uint8_t)(((uint16_t)baseB * br) >> 8);
+        // Subtle white highlight on brightest sparkles
+        if (br > 195) {
+          uint8_t spark = (br - 195) * 2;
+          r = min(255, (int)r + spark);
+          g = min(255, (int)g + spark);
+          b = min(255, (int)b + spark);
+        }
+        strip.setPixelColor(i, NeoPixelDriver::Color(r, g, b));
       }
     } else {
       // Game: Fast Nova Deflector
@@ -459,9 +589,15 @@ public:
         roundOverTime = currentMillis;
       }
 
+      uint8_t baseR = rotaryKnob.getR();
+      uint8_t baseG = rotaryKnob.getG();
+      uint8_t baseB = rotaryKnob.getB();
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
-        uint8_t b = twinkleBrightness[i];
-        strip.setPixelColor(i, NeoPixelDriver::Color(b, (b * 180) >> 8, (b * 105) >> 8));
+        uint8_t br = twinkleBrightness[i];
+        uint8_t r = (uint8_t)(((uint16_t)baseR * br) >> 8);
+        uint8_t g = (uint8_t)(((uint16_t)baseG * br) >> 8);
+        uint8_t b = (uint8_t)(((uint16_t)baseB * br) >> 8);
+        strip.setPixelColor(i, NeoPixelDriver::Color(r, g, b));
       }
 
       // Defense Shields
@@ -482,7 +618,7 @@ public:
 TwinkleSparkleController twinkleMode;
 
 // ============================================================================
-// 8. Mode 3: Fire / Flame (Cozy Slow Embers) & "Flame Tug"
+// 9. Mode 3: Fire / Flame & "Flame Tug" Game
 // ============================================================================
 class FireFlameController {
 private:
@@ -494,19 +630,32 @@ private:
   bool roundOver;
   unsigned long roundOverTime;
 
-  uint32_t heatToColor(uint8_t temp, bool blueFlame = false) {
+  uint32_t heatToColor(uint8_t temp, bool overrideColor = false, uint8_t orR = 0, uint8_t orG = 0, uint8_t orB = 0) {
     temp = max((uint8_t)80, temp);
     uint8_t t192 = (uint8_t)(((uint16_t)temp * 191) >> 8);
     uint8_t ramp = (t192 & 0x3F) << 2;
 
-    if (!blueFlame) {
-      if (t192 > 0x80) return NeoPixelDriver::Color(255, 255, ramp);
-      if (t192 > 0x40) return NeoPixelDriver::Color(255, ramp, 0);
-      return NeoPixelDriver::Color(ramp, 0, 0);
-    } else {
-      if (t192 > 0x80) return NeoPixelDriver::Color(ramp, 255, 255);
-      if (t192 > 0x40) return NeoPixelDriver::Color(0, ramp, 255);
-      return NeoPixelDriver::Color(0, 0, ramp);
+    uint8_t baseR = overrideColor ? orR : rotaryKnob.getR();
+    uint8_t baseG = overrideColor ? orG : rotaryKnob.getG();
+    uint8_t baseB = overrideColor ? orB : rotaryKnob.getB();
+
+    if (t192 > 0x80) { // Hottest: blend toward white hot
+      uint8_t r = min(255, (int)baseR + ramp);
+      uint8_t g = min(255, (int)baseG + ramp);
+      uint8_t b = min(255, (int)baseB + ramp);
+      return NeoPixelDriver::Color(r, g, b);
+    } else if (t192 > 0x40) { // Medium: full saturation of base color
+      uint8_t factor = (t192 << 1);
+      uint8_t r = (uint8_t)(((uint16_t)baseR * factor) >> 8);
+      uint8_t g = (uint8_t)(((uint16_t)baseG * factor) >> 8);
+      uint8_t b = (uint8_t)(((uint16_t)baseB * factor) >> 8);
+      return NeoPixelDriver::Color(r, g, b);
+    } else { // Coolest: dark ember base color
+      uint8_t factor = max((uint8_t)60, (uint8_t)(t192 << 2));
+      uint8_t r = (uint8_t)(((uint16_t)baseR * factor) >> 8);
+      uint8_t g = (uint8_t)(((uint16_t)baseG * factor) >> 8);
+      uint8_t b = (uint8_t)(((uint16_t)baseB * factor) >> 8);
+      return NeoPixelDriver::Color(r, g, b);
     }
   }
 
@@ -521,7 +670,7 @@ public:
   }
 
   void update(unsigned long currentMillis) {
-    if (currentMillis - lastUpdate < (inGameMode ? 25 : 60)) return; // 60ms slow ambient!
+    if (currentMillis - lastUpdate < (inGameMode ? 25 : 60)) return;
     lastUpdate = currentMillis;
 
     // Slow gentle cooling
@@ -531,11 +680,11 @@ public:
     }
 
     if (!inGameMode) {
-      // Ambient: Slow cozy hearth smoothing
+      // Ambient: Hearth fire in Rotary Knob Flame Tint!
       for (int k = NUM_LEDS - 1; k >= 2; k--) {
         heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
       }
-      if (random(0, 10) < 2) { // Calm, infrequent spark
+      if (random(0, 10) < 2) {
         int sparkPos = random(0, NUM_LEDS);
         heat[sparkPos] = min(255, heat[sparkPos] + random(60, 110));
       }
@@ -573,8 +722,9 @@ public:
         }
       }
 
-      for (int i = 0; i <= flameClashPos; i++) strip.setPixelColor(i, heatToColor(heat[i], true));
-      for (int i = flameClashPos; i < NUM_LEDS; i++) strip.setPixelColor(i, heatToColor(heat[i], false));
+      // P1: Blue Forge; P2: Red Forge
+      for (int i = 0; i <= flameClashPos; i++) strip.setPixelColor(i, heatToColor(heat[i], true, 0, 120, 255));
+      for (int i = flameClashPos; i < NUM_LEDS; i++) strip.setPixelColor(i, heatToColor(heat[i], true, 255, 60, 0));
       if (flameClashPos >= 0 && flameClashPos < NUM_LEDS) {
         strip.setPixelColor(flameClashPos, NeoPixelDriver::Color(255, 255, 240));
       }
@@ -586,15 +736,14 @@ public:
 FireFlameController fireMode;
 
 // ============================================================================
-// 9. Mode 4: Chase / Marquee (Vintage Slow-Crawling) & "Marquee Intercept"
+// 10. Mode 4: Chase / Marquee & "Marquee Intercept" Game
 // ============================================================================
 class TheaterChaseController {
 private:
   unsigned long lastUpdate = 0;
   uint8_t stepOffset = 0;
 
-  // Game: Marquee Intercept
-  int8_t targetScore = 0; // -10 (P2 wins) to +10 (P1 wins)
+  int8_t targetScore = 0;
   bool roundOver = false;
   unsigned long roundOverTime = 0;
 
@@ -605,24 +754,35 @@ public:
   }
 
   void update(unsigned long currentMillis) {
-    unsigned long interval = inGameMode ? 32 : 220; // 220ms ultra-slow ambient marquee!
+    unsigned long interval = inGameMode ? 32 : 220;
     if (currentMillis - lastUpdate < interval) return;
     lastUpdate = currentMillis;
 
     stepOffset = (stepOffset + 1) % 4;
 
     if (!inGameMode) {
-      // Ambient: Vintage slow theater marquee with warm golden amber glow
+      // Ambient: Vintage slow theater marquee in Rotary Knob Base-Color!
+      uint8_t baseR = rotaryKnob.getR();
+      uint8_t baseG = rotaryKnob.getG();
+      uint8_t baseB = rotaryKnob.getB();
+
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
         if ((i + stepOffset) % 4 == 0) {
-          strip.setPixelColor(i, NeoPixelDriver::Color(255, 190, 60)); // Highlight bulb
+          strip.setPixelColor(i, NeoPixelDriver::Color(
+            min(255, (int)baseR + 40),
+            min(255, (int)baseG + 40),
+            min(255, (int)baseB + 40)
+          ));
         } else {
-          strip.setPixelColor(i, NeoPixelDriver::Color(80, 45, 12));   // Ambient warm floor
+          strip.setPixelColor(i, NeoPixelDriver::Color(
+            (baseR * 75) >> 8,
+            (baseG * 75) >> 8,
+            (baseB * 75) >> 8
+          ));
         }
       }
     } else {
       // Game: Fast Marquee Intercept
-      // Active marquee dot cycles fast. Target zones: P1 on 10..18, P2 on 42..50
       if (roundOver) {
         if (currentMillis - roundOverTime > 2000) resetGame();
         return;
@@ -650,23 +810,22 @@ public:
         }
       }
 
-      // Render base warm background
+      uint8_t baseR = rotaryKnob.getR();
+      uint8_t baseG = rotaryKnob.getG();
+      uint8_t baseB = rotaryKnob.getB();
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
-        strip.setPixelColor(i, NeoPixelDriver::Color(70, 40, 15));
+        strip.setPixelColor(i, NeoPixelDriver::Color((baseR * 70) >> 8, (baseG * 70) >> 8, (baseB * 70) >> 8));
       }
 
-      // Render P1 Target Zone (Cyan) and P2 Target Zone (Amber)
       for (int i = 10; i <= 18; i++) strip.setPixelColor(i, NeoPixelDriver::Color(20, 90, 180));
       for (int i = 42; i <= 50; i++) strip.setPixelColor(i, NeoPixelDriver::Color(180, 70, 20));
 
-      // Fast spinning marquee dots
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
         if ((i + stepOffset) % 6 == 0) {
           strip.setPixelColor(i, NeoPixelDriver::Color(255, 255, 220));
         }
       }
 
-      // Tug-of-war tug marker in center based on score
       int markerPos = 30 + targetScore * 2;
       markerPos = constrain(markerPos, 0, 59);
       strip.setPixelColor(markerPos, NeoPixelDriver::Color(255, 255, 255));
@@ -678,16 +837,15 @@ public:
 TheaterChaseController chaseMode;
 
 // ============================================================================
-// 10. Mode 5: Comet / Meteor (Gentle Gliding Star) & "Meteor Deflector"
+// 11. Mode 5: Comet / Meteor & "Meteor Deflector" Game
 // ============================================================================
 class CometMeteorController {
 private:
   unsigned long lastUpdate = 0;
   float headPos = 0.0f;
-  float speed = 0.15f; // Very slow gliding speed (~13s across strip)
+  float speed = 0.15f;
   int8_t direction = 1;
 
-  // Game: Meteor Deflector state
   float gameMeteorPos = 30.0f;
   float gameMeteorSpeed = 1.1f;
   bool roundOver = false;
@@ -705,7 +863,11 @@ public:
     lastUpdate = currentMillis;
 
     if (!inGameMode) {
-      // Ambient: Ultra-slow graceful gliding comet with dissolving tail
+      // Ambient: Gliding comet in Rotary Knob Base-Color!
+      uint8_t baseR = rotaryKnob.getR();
+      uint8_t baseG = rotaryKnob.getG();
+      uint8_t baseB = rotaryKnob.getB();
+
       headPos += speed * direction;
       if (headPos >= 59.0f) {
         direction = -1;
@@ -715,18 +877,30 @@ public:
         headPos = 0.0f;
       }
 
-      // Draw warm ambient floor first
+      // Base floor of rotary base color
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
-        strip.setPixelColor(i, NeoPixelDriver::Color(65, 38, 12));
+        strip.setPixelColor(i, NeoPixelDriver::Color(
+          (baseR * 65) >> 8,
+          (baseG * 65) >> 8,
+          (baseB * 65) >> 8
+        ));
       }
 
-      // Draw soft comet tail (8 LEDs long)
+      // Comet tail fades in base color
       for (int t = 0; t < 12; t++) {
         float p = headPos - (t * direction);
         int idx = (int)round(p);
         if (idx >= 0 && idx < NUM_LEDS) {
-          uint8_t factor = (12 - t) * 18;
-          strip.setPixelColor(idx, NeoPixelDriver::Color(255, min(255, 140 + factor), factor));
+          uint8_t factor = (12 - t) * 20;
+          uint8_t r = (uint8_t)(((uint16_t)baseR * factor) >> 8);
+          uint8_t g = (uint8_t)(((uint16_t)baseG * factor) >> 8);
+          uint8_t b = (uint8_t)(((uint16_t)baseB * factor) >> 8);
+          if (t == 0) {
+            r = min(255, (int)r + 160);
+            g = min(255, (int)g + 160);
+            b = min(255, (int)b + 160);
+          }
+          strip.setPixelColor(idx, NeoPixelDriver::Color(r, g, b));
         }
       }
     } else {
@@ -759,7 +933,12 @@ public:
         roundOverTime = currentMillis;
       }
 
-      for (uint16_t i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, NeoPixelDriver::Color(60, 35, 15));
+      uint8_t baseR = rotaryKnob.getR();
+      uint8_t baseG = rotaryKnob.getG();
+      uint8_t baseB = rotaryKnob.getB();
+      for (uint16_t i = 0; i < NUM_LEDS; i++) {
+        strip.setPixelColor(i, NeoPixelDriver::Color((baseR * 60) >> 8, (baseG * 60) >> 8, (baseB * 60) >> 8));
+      }
       for (int i = 0; i < 9; i++) strip.setPixelColor(i, NeoPixelDriver::Color(10, 80, 220));
       for (int i = 51; i < 60; i++) strip.setPixelColor(i, NeoPixelDriver::Color(220, 60, 10));
 
@@ -777,14 +956,13 @@ public:
 CometMeteorController cometMode;
 
 // ============================================================================
-// 11. Mode 6: Scanner / Cylon (6.0s Smooth Larson Eye) & "Cylon Clash"
+// 12. Mode 6: Scanner / Cylon & "Cylon Clash" Game
 // ============================================================================
 class CylonScannerController {
 private:
   unsigned long lastUpdate = 0;
-  const unsigned long SWEEP_PERIOD = 6000; // 6.0 seconds per full dual sweep
+  const unsigned long SWEEP_PERIOD = 6000;
 
-  // Game: Cylon Clash
   float puckPos = 30.0f;
   float puckSpeed = 1.2f;
   bool roundOver = false;
@@ -802,19 +980,35 @@ public:
     lastUpdate = currentMillis;
 
     if (!inGameMode) {
-      // Ambient: Larson scanner with smooth cosine edge deceleration
+      // Ambient: Larson scanner sweeping in Rotary Knob Base-Color!
+      uint8_t baseR = rotaryKnob.getR();
+      uint8_t baseG = rotaryKnob.getG();
+      uint8_t baseB = rotaryKnob.getB();
+
       float phase = (float)(currentMillis % SWEEP_PERIOD) / (float)SWEEP_PERIOD;
       float eyePos = 29.5f + 27.5f * sin(phase * 2.0f * PI);
 
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
         float dist = abs((float)i - eyePos);
         if (dist < 1.0f) {
-          strip.setPixelColor(i, NeoPixelDriver::Color(255, 170, 40));
+          strip.setPixelColor(i, NeoPixelDriver::Color(
+            min(255, (int)baseR + 80),
+            min(255, (int)baseG + 80),
+            min(255, (int)baseB + 80)
+          ));
         } else if (dist < 6.0f) {
           uint8_t glow = (uint8_t)(255 * (1.0f - dist / 6.0f));
-          strip.setPixelColor(i, NeoPixelDriver::Color(glow, (glow * 60) >> 8, 15));
+          strip.setPixelColor(i, NeoPixelDriver::Color(
+            ((uint16_t)baseR * glow) >> 8,
+            ((uint16_t)baseG * glow) >> 8,
+            ((uint16_t)baseB * glow) >> 8
+          ));
         } else {
-          strip.setPixelColor(i, NeoPixelDriver::Color(60, 32, 10)); // Ambient floor
+          strip.setPixelColor(i, NeoPixelDriver::Color(
+            (baseR * 60) >> 8,
+            (baseG * 60) >> 8,
+            (baseB * 60) >> 8
+          ));
         }
       }
     } else {
@@ -847,7 +1041,12 @@ public:
         roundOverTime = currentMillis;
       }
 
-      for (uint16_t i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, NeoPixelDriver::Color(55, 30, 10));
+      uint8_t baseR = rotaryKnob.getR();
+      uint8_t baseG = rotaryKnob.getG();
+      uint8_t baseB = rotaryKnob.getB();
+      for (uint16_t i = 0; i < NUM_LEDS; i++) {
+        strip.setPixelColor(i, NeoPixelDriver::Color((baseR * 55) >> 8, (baseG * 55) >> 8, (baseB * 55) >> 8));
+      }
       for (int i = 0; i < 9; i++) strip.setPixelColor(i, NeoPixelDriver::Color(15, 95, 215));
       for (int i = 51; i < 60; i++) strip.setPixelColor(i, NeoPixelDriver::Color(215, 75, 15));
 
@@ -865,7 +1064,7 @@ public:
 CylonScannerController cylonMode;
 
 // ============================================================================
-// 12. Mode 7: Color Wipe (11s Meditative Roll) & "Territory Paint / Wipe Wars"
+// 13. Mode 7: Color Wipe & "Territory Paint / Wipe Wars" Game
 // ============================================================================
 class ColorWipeController {
 private:
@@ -873,17 +1072,9 @@ private:
   uint8_t wipeIdx = 0;
   uint8_t paletteIdx = 0;
 
-  // Game: Territory Paint state
-  int8_t paintBoundary = 30; // 0..59 (0 = P2 wins, 59 = P1 wins)
+  int8_t paintBoundary = 30;
   bool roundOver = false;
   unsigned long roundOverTime = 0;
-
-  const uint32_t PALETTES[4] = {
-    0xFFA028, // Sunset Amber
-    0x9333EA, // Twilight Purple
-    0x0EA5E9, // Ocean Teal
-    0xE11D48  // Rose Quartz
-  };
 
 public:
   void resetGame() {
@@ -892,19 +1083,24 @@ public:
   }
 
   void update(unsigned long currentMillis) {
-    if (currentMillis - lastUpdate < (inGameMode ? 20 : 180)) return; // 180ms per LED ≈ 11s wipe!
+    if (currentMillis - lastUpdate < (inGameMode ? 20 : 180)) return;
     lastUpdate = currentMillis;
 
     if (!inGameMode) {
-      // Ambient: Slow meditative progressive color roll
-      strip.setPixelColor(wipeIdx, PALETTES[paletteIdx]);
+      // Ambient: Progressive color wipe starting from Rotary Knob Base-Color!
+      // Cycles through harmonic offsets: 0 (base), +60°, +120°, +180° around the color wheel
+      uint16_t baseHue = rotaryKnob.getHue();
+      uint16_t wipeHue = baseHue + (paletteIdx * 10922);
+      uint32_t wipeCol = NeoPixelDriver::ColorHSV(wipeHue, 255, 255);
+
+      strip.setPixelColor(wipeIdx, wipeCol);
       wipeIdx++;
       if (wipeIdx >= NUM_LEDS) {
         wipeIdx = 0;
         paletteIdx = (paletteIdx + 1) % 4;
       }
     } else {
-      // Game: Fast Wipe Wars (Territory Paint)
+      // Game: Fast Wipe Wars
       if (roundOver) {
         if (currentMillis - roundOverTime > 2000) resetGame();
         return;
@@ -928,15 +1124,12 @@ public:
         }
       }
 
-      // Render P1 Paint (Neon Cyan)
       for (int i = 0; i <= paintBoundary; i++) {
         strip.setPixelColor(i, NeoPixelDriver::Color(14, 165, 233));
       }
-      // Render P2 Paint (Hot Magenta)
       for (int i = paintBoundary + 1; i < NUM_LEDS; i++) {
         strip.setPixelColor(i, NeoPixelDriver::Color(225, 29, 72));
       }
-      // Paint Clash Wave in middle
       if (paintBoundary >= 0 && paintBoundary < NUM_LEDS) {
         strip.setPixelColor(paintBoundary, NeoPixelDriver::Color(255, 255, 255));
       }
@@ -948,7 +1141,7 @@ public:
 ColorWipeController wipeMode;
 
 // ============================================================================
-// 13. Serial Command Parser (Optional Virtual Control from Linux)
+// 14. Serial Command Parser (Optional Virtual Control from Linux)
 // ============================================================================
 void handleSerialCommands() {
   while (Serial.available()) {
@@ -970,14 +1163,21 @@ void handleSerialCommands() {
         cylonMode.resetGame();
         wipeMode.resetGame();
       }
+    } else if (c == 'c' || c == 'C') {
+      // Step hue by +4000 (~22 degrees around the rainbow)
+      rotaryKnob.stepHue(4000);
+      global_color = rotaryKnob.getRGB();
     }
   }
 }
 
 // ============================================================================
-// 14. Arduino setup() and loop()
+// 15. Arduino setup() and loop()
 // ============================================================================
 void setup() {
+  rotaryKnob.begin();
+  global_color = rotaryKnob.getRGB();
+
   btnP1.begin();
   btnP2.begin();
   btnMode.begin();
@@ -990,6 +1190,10 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
+  // 1. Read hardware inputs
+  rotaryKnob.update();
+  global_color = rotaryKnob.getRGB();
+
   btnP1.update();
   btnP2.update();
   btnMode.update();
@@ -998,14 +1202,14 @@ void loop() {
   handleSerialCommands();
 #endif
 
-  // Handle Mode Switch Button (Cycle through all 7 modes)
+  // 2. Handle Mode Switch Button (Cycle through all 7 modes)
   if (btnMode.wasPressed()) {
     currentMode = (SystemMode)(((int)currentMode + 1) % NUM_MODES);
     inGameMode = false;
     strip.clear();
   }
 
-  // Hold P1 + P2 for 800ms to toggle Game Mode
+  // 3. Hold P1 + P2 for 800ms to toggle Game Mode
   if (btnP1.isDown() && btnP2.isDown()) {
     static unsigned long dualHoldTime = 0;
     if (dualHoldTime == 0) dualHoldTime = currentMillis;
@@ -1024,7 +1228,7 @@ void loop() {
     }
   }
 
-  // Update Active Mode Controller
+  // 4. Update Active Mode Controller
   switch (currentMode) {
     case MODE_BREATHING_PULSE: pulseMode.update(currentMillis); break;
     case MODE_TWINKLE_SPARKLE: twinkleMode.update(currentMillis); break;

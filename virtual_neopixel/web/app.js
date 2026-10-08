@@ -25,19 +25,75 @@ const btnP1 = document.getElementById("btnP1");
 const btnP2 = document.getElementById("btnP2");
 const btnToggleMode = document.getElementById("btnToggleMode");
 const btnToggleGame = document.getElementById("btnToggleGame");
+const btnStepColor = document.getElementById("btnStepColor");
+const colorPreview = document.getElementById("colorPreview");
+const hueValue = document.getElementById("hueValue");
+const hueSlider = document.getElementById("hueSlider");
 
 const diffuserSelect = document.getElementById("diffuserSelect");
 const shelfTextureSelect = document.getElementById("shelfTextureSelect");
 const bloomSlider = document.getElementById("bloomSlider");
 
-// Strip State
+// Strip & Color State
 let ledBuffer = Array.from({ length: NUM_LEDS }, () => [0, 0, 0]);
 let activeGame = false;
 let currentModeName = "Breathing / Pulse";
 let bloomIntensity = 0.85;
 
+let currentHueDeg = 0; // 0..360°
+let currentMoodRGB = [255, 0, 0]; // Default Red
+
 // Set initial optics
 diffuserOverlay.className = "diffuser-overlay acrylic";
+
+// HSV to RGB Converter (matches NeoPixel ColorHSV math)
+function hsvToRgb(hDeg, s = 1.0, v = 1.0) {
+  const h = ((hDeg % 360) + 360) % 360;
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r1 = 0, g1 = 0, b1 = 0;
+  if (h < 60) { r1 = c; g1 = x; b1 = 0; }
+  else if (h < 120) { r1 = x; g1 = c; b1 = 0; }
+  else if (h < 180) { r1 = 0; g1 = c; b1 = x; }
+  else if (h < 240) { r1 = 0; g1 = x; b1 = c; }
+  else if (h < 300) { r1 = x; g1 = 0; b1 = c; }
+  else { r1 = c; g1 = 0; b1 = x; }
+  return [
+    Math.round((r1 + m) * 255),
+    Math.round((g1 + m) * 255),
+    Math.round((b1 + m) * 255)
+  ];
+}
+
+function getHueName(h) {
+  if (h >= 345 || h < 15) return "Red";
+  if (h < 45) return "Orange";
+  if (h < 75) return "Yellow";
+  if (h < 150) return "Green";
+  if (h < 195) return "Cyan";
+  if (h < 255) return "Blue";
+  if (h < 285) return "Purple";
+  if (h < 345) return "Magenta";
+  return "Red";
+}
+
+function updateMoodColorDisplay(deg, sendToArduino = true) {
+  currentHueDeg = ((deg % 360) + 360) % 360;
+  currentMoodRGB = hsvToRgb(currentHueDeg);
+  if (hueSlider) hueSlider.value = currentHueDeg;
+  if (colorPreview) {
+    colorPreview.style.background = `rgb(${currentMoodRGB[0]}, ${currentMoodRGB[1]}, ${currentMoodRGB[2]})`;
+    colorPreview.style.boxShadow = `0 0 8px rgba(${currentMoodRGB[0]}, ${currentMoodRGB[1]}, ${currentMoodRGB[2]}, 0.8)`;
+  }
+  if (hueValue) {
+    hueValue.textContent = `${Math.round(currentHueDeg)}° (${getHueName(currentHueDeg)})`;
+  }
+  if (sendToArduino) {
+    const arduinoHue = Math.round((currentHueDeg / 360.0) * 65535);
+    sendInput(`h${arduinoHue}`);
+  }
+}
 
 // ----------------------------------------------------------------------------
 // 1. Photorealistic 60-LED NeoPixel Rendering Pipeline
@@ -204,68 +260,131 @@ function runLocalDemoFallback() {
   }
 
   const mode = localModeIdx;
+  const [baseR, baseG, baseB] = currentMoodRGB;
 
   if (mode === 0) {
-    // 1. Breathing / Pulse: 7.5s ultra-slow breath
+    // 1. Breathing / Pulse: 7.5s ultra-slow breath in Rotary Mood-Color!
     const wave = (Math.sin(localTime * 0.84) + 1.0) * 0.5;
     const factor = 0.42 + wave * 0.40;
-    const r = Math.round(255 * factor);
-    const g = Math.round(148 * factor);
-    const b = Math.round(38 * factor);
+    const r = Math.round(baseR * factor);
+    const g = Math.round(baseG * factor);
+    const b = Math.round(baseB * factor);
     for (let i = 0; i < NUM_LEDS; i++) ledBuffer[i] = [r, g, b];
   } else if (mode === 1) {
-    // 2. Twinkle / Sparkle: slow drifting candle shimmer
+    // 2. Twinkle / Sparkle: slow drifting shimmer tinted by Rotary Mood-Color!
     for (let i = 0; i < NUM_LEDS; i++) {
-      const b = 60 + Math.round(90 * ((Math.sin(localTime * 1.2 + i * 0.4) + 1.0) * 0.5));
-      ledBuffer[i] = [b, Math.round(b * 0.74), Math.round(b * 0.45)];
+      const br = 60 + Math.round(90 * ((Math.sin(localTime * 1.2 + i * 0.4) + 1.0) * 0.5));
+      let r = Math.round((baseR * br) / 255);
+      let g = Math.round((baseG * br) / 255);
+      let b = Math.round((baseB * br) / 255);
+      if (br > 135) {
+        const spark = (br - 135) * 2;
+        r = Math.min(255, r + spark);
+        g = Math.min(255, g + spark);
+        b = Math.min(255, b + spark);
+      }
+      ledBuffer[i] = [r, g, b];
     }
   } else if (mode === 2) {
-    // 3. Fire / Flame: slow cozy fireplace embers
+    // 3. Fire / Flame: cozy embers in Rotary Mood-Color!
     for (let i = 0; i < NUM_LEDS; i++) {
       const fl = Math.sin(localTime * 1.5 + i * 0.25) * 20;
       const t = Math.max(78, Math.min(220, 105 + fl));
-      ledBuffer[i] = [Math.round(t), Math.round(t * 0.45), Math.round(t * 0.08)];
+      const factor = t / 255;
+      let r = Math.round(baseR * factor);
+      let g = Math.round(baseG * factor);
+      let b = Math.round(baseB * factor);
+      if (t > 150) {
+        const glow = Math.round((t - 150) * 0.9);
+        r = Math.min(255, r + glow);
+        g = Math.min(255, g + glow);
+        b = Math.min(255, b + glow);
+      }
+      ledBuffer[i] = [r, g, b];
     }
   } else if (mode === 3) {
-    // 4. Chase / Marquee: slow vintage crawling marquee (220ms step)
+    // 4. Chase / Marquee: slow vintage crawling marquee in Rotary Mood-Color!
     const step = Math.floor(localTime * 4.5) % 4;
     for (let i = 0; i < NUM_LEDS; i++) {
-      if ((i + step) % 4 === 0) ledBuffer[i] = [255, 190, 60];
-      else ledBuffer[i] = [80, 45, 12];
+      if ((i + step) % 4 === 0) {
+        ledBuffer[i] = [
+          Math.min(255, baseR + 50),
+          Math.min(255, baseG + 50),
+          Math.min(255, baseB + 50)
+        ];
+      } else {
+        ledBuffer[i] = [
+          Math.round((baseR * 75) / 255),
+          Math.round((baseG * 75) / 255),
+          Math.round((baseB * 75) / 255)
+        ];
+      }
     }
   } else if (mode === 4) {
-    // 5. Comet / Meteor: 12s graceful gliding shooting star
+    // 5. Comet / Meteor: 12s graceful gliding shooting star in Rotary Mood-Color!
     const sweep = (Math.sin(localTime * 0.5) + 1.0) * 0.5 * 59;
     for (let i = 0; i < NUM_LEDS; i++) {
       const dist = Math.abs(i - sweep);
-      if (dist < 1.0) ledBuffer[i] = [255, 255, 240];
-      else if (dist < 8.0) {
-        const glow = Math.round(255 * (1.0 - dist / 8.0));
-        ledBuffer[i] = [glow, Math.round(glow * 0.65), 20];
+      if (dist < 1.0) {
+        ledBuffer[i] = [
+          Math.min(255, baseR + 150),
+          Math.min(255, baseG + 150),
+          Math.min(255, baseB + 150)
+        ];
+      } else if (dist < 10.0) {
+        const glow = 1.0 - dist / 10.0;
+        ledBuffer[i] = [
+          Math.round(baseR * glow),
+          Math.round(baseG * glow),
+          Math.round(baseB * glow)
+        ];
       } else {
-        ledBuffer[i] = [65, 38, 12];
+        ledBuffer[i] = [
+          Math.round((baseR * 65) / 255),
+          Math.round((baseG * 65) / 255),
+          Math.round((baseB * 65) / 255)
+        ];
       }
     }
   } else if (mode === 5) {
-    // 6. Scanner / Cylon: 6s smooth Larson eye with cosine deceleration
+    // 6. Scanner / Cylon: 6s smooth Larson eye in Rotary Mood-Color!
     const eye = 29.5 + 27.5 * Math.sin(localTime * 1.05);
     for (let i = 0; i < NUM_LEDS; i++) {
       const dist = Math.abs(i - eye);
-      if (dist < 1.0) ledBuffer[i] = [255, 170, 40];
-      else if (dist < 6.0) {
-        const glow = Math.round(255 * (1.0 - dist / 6.0));
-        ledBuffer[i] = [glow, Math.round(glow * 0.24), 10];
+      if (dist < 1.0) {
+        ledBuffer[i] = [
+          Math.min(255, baseR + 80),
+          Math.min(255, baseG + 80),
+          Math.min(255, baseB + 80)
+        ];
+      } else if (dist < 6.0) {
+        const glow = 1.0 - dist / 6.0;
+        ledBuffer[i] = [
+          Math.round(baseR * glow),
+          Math.round(baseG * glow),
+          Math.round(baseB * glow)
+        ];
       } else {
-        ledBuffer[i] = [60, 32, 10];
+        ledBuffer[i] = [
+          Math.round((baseR * 60) / 255),
+          Math.round((baseG * 60) / 255),
+          Math.round((baseB * 60) / 255)
+        ];
       }
     }
   } else {
-    // 7. Color Wipe: slow progressive chromatic roll
+    // 7. Color Wipe: progressive roll across harmonic offsets from Rotary Mood-Color!
     const wipePos = Math.floor(localTime * 5.5) % NUM_LEDS;
-    const col = WIPES[Math.floor(localTime * 0.1) % WIPES.length];
+    const paletteIdx = Math.floor(localTime * 0.1) % 4;
+    const wipeHue = (currentHueDeg + paletteIdx * 60) % 360;
+    const col = hsvToRgb(wipeHue);
     for (let i = 0; i < NUM_LEDS; i++) {
       if (i <= wipePos) ledBuffer[i] = col;
-      else ledBuffer[i] = [70, 40, 15];
+      else ledBuffer[i] = [
+        Math.round((baseR * 60) / 255),
+        Math.round((baseG * 60) / 255),
+        Math.round((baseB * 60) / 255)
+      ];
     }
   }
 
@@ -282,6 +401,13 @@ async function sendInput(key) {
   } catch (e) {
     // Ignore network error if in standalone preview
   }
+}
+
+// Step Mood Color (+22° ~ +4000/65535)
+function triggerStepColor() {
+  currentHueDeg = (currentHueDeg + 22) % 360;
+  updateMoodColorDisplay(currentHueDeg, false);
+  sendInput("c");
 }
 
 // Player 1 Button Press
@@ -339,8 +465,13 @@ btnP1.addEventListener("click", triggerP1);
 btnP2.addEventListener("click", triggerP2);
 btnToggleMode.addEventListener("click", triggerModeToggle);
 btnToggleGame.addEventListener("click", triggerGameToggle);
+btnStepColor.addEventListener("click", triggerStepColor);
 
-// Keyboard Shortcuts: A = P1, L = P2, M = Mode, G = Game
+hueSlider.addEventListener("input", (e) => {
+  updateMoodColorDisplay(parseFloat(e.target.value), true);
+});
+
+// Keyboard Shortcuts: A = P1, L = P2, M = Mode, G = Game, C = Color
 window.addEventListener("keydown", (e) => {
   if (e.repeat) return;
   const key = e.key.toLowerCase();
@@ -348,7 +479,11 @@ window.addEventListener("keydown", (e) => {
   else if (key === "l") triggerP2();
   else if (key === "m") triggerModeToggle();
   else if (key === "g") triggerGameToggle();
+  else if (key === "c") triggerStepColor();
 });
+
+// Initialize mood color display (starts at 0° Red)
+updateMoodColorDisplay(0, false);
 
 // ----------------------------------------------------------------------------
 // 4. Optical & Environment Customization
