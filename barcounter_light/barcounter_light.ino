@@ -48,7 +48,7 @@
 #define BACKEND_ADAFRUIT_REAL    1  // Implementation B: Drive physical WS2812B strip via Adafruit library
 
 // >>> CONFIGURE ACTIVE TARGET HERE <<<
-#define STRIP_BACKEND            BACKEND_ADAFRUIT_REAL
+#define STRIP_BACKEND            BACKEND_VIRTUAL_SERIAL
 
 // ============================================================================
 // 2. Hardware Pin & Strip Configuration
@@ -91,8 +91,8 @@ public:
 
   void begin() {
     clear();
-#if (STRIP_BACKEND == BACKEND_VIRTUAL_SERIAL)
     Serial.begin(SERIAL_BAUD);
+#if (STRIP_BACKEND == BACKEND_VIRTUAL_SERIAL)
     Serial.print(F("\n[NEO_INIT:LEDS="));
     Serial.print(NUM_LEDS);
     Serial.println(F(":BACKEND_VIRTUAL_SERIAL]"));
@@ -263,10 +263,21 @@ private:
   uint16_t currentHue;
   uint8_t currentR, currentG, currentB;
   unsigned long lastReadTime;
+  bool virtualOverride;
+  int potAnchorRaw;
+
+  void applyRaw(int raw) {
+    currentHue = (uint16_t)(((uint32_t)raw * 65535UL) / 1023UL);
+    uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
+    currentR = (uint8_t)(rgb >> 16);
+    currentG = (uint8_t)(rgb >> 8);
+    currentB = (uint8_t)rgb;
+  }
 
 public:
   RotaryColorKnob(uint8_t p)
-    : pin(p), lastRaw(-1), currentHue(0), currentR(255), currentG(0), currentB(0), lastReadTime(0) {}
+    : pin(p), lastRaw(-1), currentHue(0), currentR(255), currentG(0), currentB(0),
+      lastReadTime(0), virtualOverride(false), potAnchorRaw(-1) {}
 
   void begin() {
     pinMode(pin, INPUT);
@@ -279,15 +290,24 @@ public:
     lastReadTime = now;
 
     int raw = analogRead(pin);
-    // Hysteresis of 4 ADC counts to prevent analog jitter
-    if (force || abs(raw - lastRaw) > 4) {
+
+    if (virtualOverride) {
+      // Soft Takeover: Virtual control (web app/serial) is currently active.
+      // Ignore normal ADC noise and floating pin jitter.
+      // Only release virtual override if physical potentiometer is turned
+      // by more than 16 counts (~1.5% of knob travel).
+      if (potAnchorRaw >= 0 && abs(raw - potAnchorRaw) > 16) {
+        virtualOverride = false;
+        lastRaw = raw;
+        applyRaw(raw);
+      }
+      return;
+    }
+
+    // Normal hardware potentiometer tracking
+    if (force || lastRaw < 0 || abs(raw - lastRaw) > 4) {
       lastRaw = raw;
-      // Map 0..1023 smoothly across the full rainbow: 0..65535
-      currentHue = (uint16_t)(((uint32_t)raw * 65535UL) / 1023UL);
-      uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
-      currentR = (uint8_t)(rgb >> 16);
-      currentG = (uint8_t)(rgb >> 8);
-      currentB = (uint8_t)rgb;
+      applyRaw(raw);
     }
   }
 
@@ -305,11 +325,16 @@ public:
     currentR = (uint8_t)(rgb >> 16);
     currentG = (uint8_t)(rgb >> 8);
     currentB = (uint8_t)rgb;
+    // Enter virtual override mode and anchor the current ADC reading
+    virtualOverride = true;
+    potAnchorRaw = analogRead(pin);
   }
 
   void stepHue(int16_t delta) {
     setHue(currentHue + delta);
   }
+
+  bool isVirtualOverride() const { return virtualOverride; }
 };
 
 RotaryColorKnob rotaryKnob(PIN_COLOR_KNOB);
@@ -1184,9 +1209,57 @@ ColorWipeController wipeMode;
 // 14. Serial Command Parser (Optional Virtual Control from Linux)
 // ============================================================================
 void handleSerialCommands() {
+  static char numBuf[8];
+  static uint8_t numIdx = 0;
+  static bool parsingHue = false;
+  static unsigned long lastDigitTime = 0;
+
+  // Auto-commit hue if line terminator was missed and 60ms elapsed
+  if (parsingHue && numIdx > 0 && (millis() - lastDigitTime > 60)) {
+    numBuf[numIdx] = '\0';
+    long hVal = atol(numBuf);
+    if (hVal < 0) hVal = 0;
+    if (hVal > 65535) hVal = 65535;
+    rotaryKnob.setHue((uint16_t)hVal);
+    global_color = rotaryKnob.getRGB();
+    parsingHue = false;
+    numIdx = 0;
+  }
+
   while (Serial.available()) {
     char c = Serial.read();
-    if (c == '1') {
+
+    if (parsingHue) {
+      if (c >= '0' && c <= '9') {
+        if (numIdx < sizeof(numBuf) - 1) {
+          numBuf[numIdx++] = c;
+          lastDigitTime = millis();
+        }
+        continue;
+      } else {
+        // Terminator reached (e.g. \n, \r, or next command)
+        numBuf[numIdx] = '\0';
+        if (numIdx > 0) {
+          long hVal = atol(numBuf);
+          if (hVal < 0) hVal = 0;
+          if (hVal > 65535) hVal = 65535;
+          rotaryKnob.setHue((uint16_t)hVal);
+          global_color = rotaryKnob.getRGB();
+        }
+        parsingHue = false;
+        numIdx = 0;
+        if (c == '\n' || c == '\r' || c == ' ' || c == '\t' || c == ';') {
+          continue; // Consume whitespace terminator
+        }
+        // Fall through to process c as next command
+      }
+    }
+
+    if (c == 'h' || c == 'H') {
+      parsingHue = true;
+      numIdx = 0;
+      lastDigitTime = millis();
+    } else if (c == '1') {
       btnP1.triggerVirtualPress();
     } else if (c == '2') {
       btnP2.triggerVirtualPress();
@@ -1238,9 +1311,7 @@ void loop() {
   btnP2.update();
   btnMode.update();
 
-#if (STRIP_BACKEND == BACKEND_VIRTUAL_SERIAL)
   handleSerialCommands();
-#endif
 
   // 2. Handle Mode Switch Button (Cycle through all 7 modes)
   if (btnMode.wasPressed()) {

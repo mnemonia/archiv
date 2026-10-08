@@ -78,6 +78,22 @@ function getHueName(h) {
   return "Red";
 }
 
+let pendingHue = null;
+let hueSendTimer = null;
+
+function throttledSendHue(hue) {
+  pendingHue = hue;
+  if (!hueSendTimer) {
+    hueSendTimer = setTimeout(() => {
+      if (pendingHue !== null) {
+        sendInput(`h${pendingHue}`);
+        pendingHue = null;
+      }
+      hueSendTimer = null;
+    }, 40);
+  }
+}
+
 function updateMoodColorDisplay(deg, sendToArduino = true) {
   currentHueDeg = ((deg % 360) + 360) % 360;
   currentMoodRGB = hsvToRgb(currentHueDeg);
@@ -91,7 +107,7 @@ function updateMoodColorDisplay(deg, sendToArduino = true) {
   }
   if (sendToArduino) {
     const arduinoHue = Math.round((currentHueDeg / 360.0) * 65535);
-    sendInput(`h${arduinoHue}`);
+    throttledSendHue(arduinoHue);
   }
 }
 
@@ -470,6 +486,11 @@ btnStepColor.addEventListener("click", triggerStepColor);
 
 hueSlider.addEventListener("input", (e) => {
   updateMoodColorDisplay(parseFloat(e.target.value), true);
+});
+
+hueSlider.addEventListener("change", (e) => {
+  const arduinoHue = Math.round((parseFloat(e.target.value) / 360.0) * 65535);
+  sendInput(`h${arduinoHue}`);
 });
 
 // Keyboard Shortcuts: A = P1, L = P2, M = Mode, G = Game, C = Color

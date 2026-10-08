@@ -376,14 +376,15 @@ class VisualizerHTTPHandler(SimpleHTTPRequestHandler):
             # Forward to Arduino hardware if connected
             if key and serial_handle and serial_handle.is_open:
                 try:
-                    serial_handle.write(key.encode("ascii"))
-                    print(f"[Input] Sent key '{key}' to Arduino Uno")
+                    payload = (key if key.endswith('\n') else (key + '\n')).encode("ascii")
+                    serial_handle.write(payload)
+                    print(f"[Input] Sent command '{key.strip()}' to Arduino Uno")
                 except Exception as ex:
                     print(f"[Input Error] {ex}")
 
             # Also update local demo generator state
             if key:
-                k = key.lower()
+                k = key.strip().lower()
                 if k == 'm':
                     demo_state["mode_idx"] = (demo_state["mode_idx"] + 1) % 7
                     print(f"[Demo] Switched mode to {demo_state['mode_idx']}")
