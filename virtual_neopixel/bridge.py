@@ -155,6 +155,7 @@ def read_serial_loop(port_name, baud_rate):
 demo_state = {
     "mode_idx": 0,
     "hue": 0,          # 0..65535 matching Arduino RotaryColorKnob
+    "brightness": 255, # 0..255 matching Arduino RotaryBrightnessKnob
     "in_game": False
 }
 
@@ -335,6 +336,11 @@ def run_demo_simulation_loop():
                 p[1] = min(255, p[1] + boost_g)
                 p[2] = min(255, p[2] + boost_b)
 
+        # Apply global brightness scaling (matching NeoPixelDriver show)
+        bright = demo_state.get("brightness", 255)
+        if bright < 255:
+            pixels = [[(p[0] * bright) >> 8, (p[1] * bright) >> 8, (p[2] * bright) >> 8] for p in pixels]
+
         with frame_lock:
             current_frame["leds"] = pixels
             current_frame["fps"] = 45.0
@@ -396,6 +402,19 @@ class VisualizerHTTPHandler(SimpleHTTPRequestHandler):
                         h_val = int(k[1:])
                         demo_state["hue"] = max(0, min(65535, h_val))
                         print(f"[Demo] Set hue to {demo_state['hue']}")
+                    except ValueError:
+                        pass
+                elif k == 'b':
+                    cur_b = demo_state.get("brightness", 255)
+                    new_b = cur_b + 25
+                    if new_b > 255: new_b = 25
+                    demo_state["brightness"] = new_b
+                    print(f"[Demo] Stepped brightness to {demo_state['brightness']}")
+                elif k.startswith('b'):
+                    try:
+                        b_val = int(k[1:])
+                        demo_state["brightness"] = max(0, min(255, b_val))
+                        print(f"[Demo] Set brightness to {demo_state['brightness']}")
                     except ValueError:
                         pass
                 elif k == 'g':

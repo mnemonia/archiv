@@ -33,6 +33,7 @@ The system provides two compile-time implementations in [`barcounter_light.ino`]
 | Component | Arduino Pin | Mode | Notes |
 | :--- | :--- | :--- | :--- |
 | **Rotary Color Knob** | `Pin A3` | `INPUT` (Analog) | Potentiometer wiper (outer terminals to 5V & GND). Maps 0..1023 to 0..65535 hue across full rainbow palette |
+| **Rotary Brightness Knob** | `Pin A2` | `INPUT` (Analog) | Potentiometer wiper (outer terminals to 5V & GND). Maps 0..1023 to 0..255 global brightness (0–100%) |
 | **Player 1 Button** | `Pin 2` | `INPUT_PULLUP` | Momentary pushbutton to GND |
 | **Player 2 Button** | `Pin 4` | `INPUT_PULLUP` | Momentary pushbutton to GND |
 | **Mode Switch** | `Pin 7` | `INPUT_PULLUP` | Momentary pushbutton to GND |
@@ -75,6 +76,7 @@ Then open your browser (e.g. Firefox) at:
 - **`[M]` Key**: Toggle Mode (Cycles 1 through 7)
 - **`[G]` Key**: Start / Stop Competition Game
 - **`[C]` Key / UI Slider**: Step / Adjust Rotary Base Color (+22° ~ +4000/65535 hue per step)
+- **`[B]` Key / UI Slider**: Step / Adjust Global Brightness (+25 / 255 per step)
 
 ### Running Automated Protocol Verification:
 ```bash

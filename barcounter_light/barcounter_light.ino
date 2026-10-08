@@ -33,11 +33,12 @@
  *       guaranteeing room / bar counter illumination even during games.
  * 
  * Hardware Wiring:
- *   - Rotary Color Knob: Pin A3 <--> Potentiometer Wiper (Outer pins to 5V and GND)
- *   - Player 1 Button:   Pin 2  <--> GND (uses internal pull-up)
- *   - Player 2 Button:   Pin 4  <--> GND (uses internal pull-up)
- *   - Mode Switch:       Pin 7  <--> GND (uses internal pull-up)
- *   - Physical Strip:    Pin 6  <--> NeoPixel DIN (Production Implementation B)
+ *   - Rotary Color Knob:      Pin A3 <--> Potentiometer Wiper (Outer pins to 5V and GND)
+ *   - Rotary Brightness Knob: Pin A2 <--> Potentiometer Wiper (Outer pins to 5V and GND)
+ *   - Player 1 Button:        Pin 2  <--> GND (uses internal pull-up)
+ *   - Player 2 Button:        Pin 4  <--> GND (uses internal pull-up)
+ *   - Mode Switch:            Pin 7  <--> GND (uses internal pull-up)
+ *   - Physical Strip:         Pin 6  <--> NeoPixel DIN (Production Implementation B)
  * ============================================================================
  */
 
@@ -57,6 +58,7 @@
 #define LED_PIN                  6      // Output data pin for physical strip (Backend B)
 
 #define PIN_COLOR_KNOB           A3     // Rotary knob potentiometer wiper for global color setting
+#define PIN_BRIGHTNESS_KNOB      A2     // Rotary knob potentiometer wiper for global brightness setting
 #define PIN_BTN_P1               2      // Player 1 input button (active LOW)
 #define PIN_BTN_P2               4      // Player 2 input button (active LOW)
 #define PIN_BTN_MODE             7      // Mode toggle button (active LOW)
@@ -341,7 +343,81 @@ RotaryColorKnob rotaryKnob(PIN_COLOR_KNOB);
 uint32_t global_color = NeoPixelDriver::Color(255, 0, 0);
 
 // ============================================================================
-// 5. Debounced Input Manager (Two Players + Mode Switch)
+// 5. Global Rotary Brightness Knob Controller
+// ============================================================================
+class RotaryBrightnessKnob {
+private:
+  uint8_t pin;
+  int lastRaw;
+  uint8_t currentBrightness;
+  unsigned long lastReadTime;
+  bool virtualOverride;
+  int potAnchorRaw;
+
+  void applyRaw(int raw) {
+    // Map 0..1023 smoothly to full 0..255 brightness
+    currentBrightness = (uint8_t)(((uint32_t)raw * 255UL) / 1023UL);
+  }
+
+public:
+  RotaryBrightnessKnob(uint8_t p)
+    : pin(p), lastRaw(-1), currentBrightness(255), lastReadTime(0),
+      virtualOverride(false), potAnchorRaw(-1) {}
+
+  void begin() {
+    pinMode(pin, INPUT);
+    update(true);
+  }
+
+  void update(bool force = false) {
+    unsigned long now = millis();
+    if (!force && now - lastReadTime < 35) return; // 35ms update
+    lastReadTime = now;
+
+    int raw = analogRead(pin);
+
+    if (virtualOverride) {
+      // Soft Takeover: Virtual control (web app/serial) is currently active.
+      // Ignore normal ADC noise and floating pin jitter.
+      // Only release virtual override if physical potentiometer is turned
+      // by more than 16 counts (~1.5% of knob travel).
+      if (potAnchorRaw >= 0 && abs(raw - potAnchorRaw) > 16) {
+        virtualOverride = false;
+        lastRaw = raw;
+        applyRaw(raw);
+      }
+      return;
+    }
+
+    // Normal hardware potentiometer tracking
+    if (force || lastRaw < 0 || abs(raw - lastRaw) > 4) {
+      lastRaw = raw;
+      applyRaw(raw);
+    }
+  }
+
+  uint8_t getBrightness() const { return currentBrightness; }
+
+  void setBrightness(uint8_t b) {
+    currentBrightness = b;
+    virtualOverride = true;
+    potAnchorRaw = analogRead(pin);
+  }
+
+  void stepBrightness(int16_t delta = 25) {
+    int nextB = (int)currentBrightness + delta;
+    if (nextB > 255) nextB = (delta > 0) ? 25 : 255;
+    if (nextB < 0) nextB = 0;
+    setBrightness((uint8_t)nextB);
+  }
+
+  bool isVirtualOverride() const { return virtualOverride; }
+};
+
+RotaryBrightnessKnob brightnessKnob(PIN_BRIGHTNESS_KNOB);
+
+// ============================================================================
+// 6. Debounced Input Manager (Two Players + Mode Switch)
 // ============================================================================
 class Button {
 private:
@@ -398,7 +474,7 @@ Button btnP2(PIN_BTN_P2);
 Button btnMode(PIN_BTN_MODE);
 
 // ============================================================================
-// 6. System Modes & States
+// 7. System Modes & States
 // ============================================================================
 enum SystemMode {
   MODE_BREATHING_PULSE = 0,
@@ -415,7 +491,7 @@ SystemMode currentMode = MODE_BREATHING_PULSE;
 bool inGameMode = false;
 
 // ============================================================================
-// 7. Mode 1: Breathing / Pulse & "Resonance Pulse" Game
+// 8. Mode 1: Breathing / Pulse & "Resonance Pulse" Game
 // ============================================================================
 class BreathingPulseController {
 private:
@@ -526,7 +602,7 @@ public:
 BreathingPulseController pulseMode;
 
 // ============================================================================
-// 8. Mode 2: Twinkle / Sparkle & "Sparkle Rush" Game
+// 9. Mode 2: Twinkle / Sparkle & "Sparkle Rush" Game
 // ============================================================================
 class TwinkleSparkleController {
 private:
@@ -652,7 +728,7 @@ public:
 TwinkleSparkleController twinkleMode;
 
 // ============================================================================
-// 9. Mode 3: Fire / Flame & "Flame Tug" Game
+// 10. Mode 3: Fire / Flame & "Flame Tug" Game
 // ============================================================================
 class FireFlameController {
 private:
@@ -772,7 +848,7 @@ public:
 FireFlameController fireMode;
 
 // ============================================================================
-// 10. Mode 4: Chase / Marquee & "Marquee Intercept" Game
+// 11. Mode 4: Chase / Marquee & "Marquee Intercept" Game
 // ============================================================================
 class TheaterChaseController {
 private:
@@ -881,7 +957,7 @@ public:
 TheaterChaseController chaseMode;
 
 // ============================================================================
-// 11. Mode 5: Comet / Meteor & "Meteor Deflector" Game
+// 12. Mode 5: Comet / Meteor & "Meteor Deflector" Game
 // ============================================================================
 class CometMeteorController {
 private:
@@ -1007,7 +1083,7 @@ public:
 CometMeteorController cometMode;
 
 // ============================================================================
-// 12. Mode 6: Scanner / Cylon & "Cylon Clash" Game
+// 13. Mode 6: Scanner / Cylon & "Cylon Clash" Game
 // ============================================================================
 class CylonScannerController {
 private:
@@ -1125,7 +1201,7 @@ public:
 CylonScannerController cylonMode;
 
 // ============================================================================
-// 13. Mode 7: Color Wipe & "Territory Paint / Wipe Wars" Game
+// 14. Mode 7: Color Wipe & "Territory Paint / Wipe Wars" Game
 // ============================================================================
 class ColorWipeController {
 private:
@@ -1206,30 +1282,38 @@ public:
 ColorWipeController wipeMode;
 
 // ============================================================================
-// 14. Serial Command Parser (Optional Virtual Control from Linux)
+// 15. Serial Command Parser (Optional Virtual Control from Linux)
 // ============================================================================
 void handleSerialCommands() {
   static char numBuf[8];
   static uint8_t numIdx = 0;
-  static bool parsingHue = false;
+  enum NumTarget { TARGET_NONE, TARGET_HUE, TARGET_BRIGHTNESS };
+  static NumTarget numTarget = TARGET_NONE;
   static unsigned long lastDigitTime = 0;
 
-  // Auto-commit hue if line terminator was missed and 60ms elapsed
-  if (parsingHue && numIdx > 0 && (millis() - lastDigitTime > 60)) {
+  // Auto-commit number if line terminator was missed and 60ms elapsed
+  if (numTarget != TARGET_NONE && numIdx > 0 && (millis() - lastDigitTime > 60)) {
     numBuf[numIdx] = '\0';
-    long hVal = atol(numBuf);
-    if (hVal < 0) hVal = 0;
-    if (hVal > 65535) hVal = 65535;
-    rotaryKnob.setHue((uint16_t)hVal);
-    global_color = rotaryKnob.getRGB();
-    parsingHue = false;
+    long val = atol(numBuf);
+    if (numTarget == TARGET_HUE) {
+      if (val < 0) val = 0;
+      if (val > 65535) val = 65535;
+      rotaryKnob.setHue((uint16_t)val);
+      global_color = rotaryKnob.getRGB();
+    } else if (numTarget == TARGET_BRIGHTNESS) {
+      if (val < 0) val = 0;
+      if (val > 255) val = 255;
+      brightnessKnob.setBrightness((uint8_t)val);
+      strip.setBrightness(brightnessKnob.getBrightness());
+    }
+    numTarget = TARGET_NONE;
     numIdx = 0;
   }
 
   while (Serial.available()) {
     char c = Serial.read();
 
-    if (parsingHue) {
+    if (numTarget != TARGET_NONE) {
       if (c >= '0' && c <= '9') {
         if (numIdx < sizeof(numBuf) - 1) {
           numBuf[numIdx++] = c;
@@ -1240,13 +1324,26 @@ void handleSerialCommands() {
         // Terminator reached (e.g. \n, \r, or next command)
         numBuf[numIdx] = '\0';
         if (numIdx > 0) {
-          long hVal = atol(numBuf);
-          if (hVal < 0) hVal = 0;
-          if (hVal > 65535) hVal = 65535;
-          rotaryKnob.setHue((uint16_t)hVal);
-          global_color = rotaryKnob.getRGB();
+          long val = atol(numBuf);
+          if (numTarget == TARGET_HUE) {
+            if (val < 0) val = 0;
+            if (val > 65535) val = 65535;
+            rotaryKnob.setHue((uint16_t)val);
+            global_color = rotaryKnob.getRGB();
+          } else if (numTarget == TARGET_BRIGHTNESS) {
+            if (val < 0) val = 0;
+            if (val > 255) val = 255;
+            brightnessKnob.setBrightness((uint8_t)val);
+            strip.setBrightness(brightnessKnob.getBrightness());
+          }
+        } else {
+          // If 'b' arrived without digits, step brightness by +25
+          if (numTarget == TARGET_BRIGHTNESS) {
+            brightnessKnob.stepBrightness(25);
+            strip.setBrightness(brightnessKnob.getBrightness());
+          }
         }
-        parsingHue = false;
+        numTarget = TARGET_NONE;
         numIdx = 0;
         if (c == '\n' || c == '\r' || c == ' ' || c == '\t' || c == ';') {
           continue; // Consume whitespace terminator
@@ -1256,7 +1353,11 @@ void handleSerialCommands() {
     }
 
     if (c == 'h' || c == 'H') {
-      parsingHue = true;
+      numTarget = TARGET_HUE;
+      numIdx = 0;
+      lastDigitTime = millis();
+    } else if (c == 'b' || c == 'B') {
+      numTarget = TARGET_BRIGHTNESS;
       numIdx = 0;
       lastDigitTime = millis();
     } else if (c == '1') {
@@ -1285,11 +1386,14 @@ void handleSerialCommands() {
 }
 
 // ============================================================================
-// 15. Arduino setup() and loop()
+// 16. Arduino setup() and loop()
 // ============================================================================
 void setup() {
   rotaryKnob.begin();
   global_color = rotaryKnob.getRGB();
+
+  brightnessKnob.begin();
+  strip.setBrightness(brightnessKnob.getBrightness());
 
   btnP1.begin();
   btnP2.begin();
@@ -1306,6 +1410,9 @@ void loop() {
   // 1. Read hardware inputs
   rotaryKnob.update();
   global_color = rotaryKnob.getRGB();
+
+  brightnessKnob.update();
+  strip.setBrightness(brightnessKnob.getBrightness());
 
   btnP1.update();
   btnP2.update();

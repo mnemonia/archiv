@@ -26,15 +26,18 @@ const btnP2 = document.getElementById("btnP2");
 const btnToggleMode = document.getElementById("btnToggleMode");
 const btnToggleGame = document.getElementById("btnToggleGame");
 const btnStepColor = document.getElementById("btnStepColor");
+const btnStepBrightness = document.getElementById("btnStepBrightness");
 const colorPreview = document.getElementById("colorPreview");
 const hueValue = document.getElementById("hueValue");
 const hueSlider = document.getElementById("hueSlider");
+const brightnessValue = document.getElementById("brightnessValue");
+const brightnessSlider = document.getElementById("brightnessSlider");
 
 const diffuserSelect = document.getElementById("diffuserSelect");
 const shelfTextureSelect = document.getElementById("shelfTextureSelect");
 const bloomSlider = document.getElementById("bloomSlider");
 
-// Strip & Color State
+// Strip, Color & Brightness State
 let ledBuffer = Array.from({ length: NUM_LEDS }, () => [0, 0, 0]);
 let activeGame = false;
 let currentModeName = "Breathing / Pulse";
@@ -42,6 +45,7 @@ let bloomIntensity = 0.85;
 
 let currentHueDeg = 0; // 0..360°
 let currentMoodRGB = [255, 0, 0]; // Default Red
+let currentBrightness = 255; // 0..255 Default 100%
 
 // Set initial optics
 diffuserOverlay.className = "diffuser-overlay acrylic";
@@ -108,6 +112,33 @@ function updateMoodColorDisplay(deg, sendToArduino = true) {
   if (sendToArduino) {
     const arduinoHue = Math.round((currentHueDeg / 360.0) * 65535);
     throttledSendHue(arduinoHue);
+  }
+}
+
+let pendingBrightness = null;
+let brightnessSendTimer = null;
+
+function throttledSendBrightness(b) {
+  pendingBrightness = b;
+  if (!brightnessSendTimer) {
+    brightnessSendTimer = setTimeout(() => {
+      if (pendingBrightness !== null) {
+        sendInput(`b${pendingBrightness}`);
+        pendingBrightness = null;
+      }
+      brightnessSendTimer = null;
+    }, 40);
+  }
+}
+
+function updateBrightnessDisplay(b, sendToArduino = true) {
+  currentBrightness = Math.max(0, Math.min(255, Math.round(b)));
+  if (brightnessSlider) brightnessSlider.value = currentBrightness;
+  if (brightnessValue) {
+    brightnessValue.textContent = `${Math.round((currentBrightness / 255) * 100)}% (${currentBrightness})`;
+  }
+  if (sendToArduino) {
+    throttledSendBrightness(currentBrightness);
   }
 }
 
@@ -405,7 +436,17 @@ function runLocalDemoFallback() {
     }
   }
 
-  luxValue.textContent = "42%";
+  if (currentBrightness < 255) {
+    for (let i = 0; i < NUM_LEDS; i++) {
+      ledBuffer[i] = [
+        (ledBuffer[i][0] * currentBrightness) >> 8,
+        (ledBuffer[i][1] * currentBrightness) >> 8,
+        (ledBuffer[i][2] * currentBrightness) >> 8
+      ];
+    }
+  }
+
+  luxValue.textContent = `${Math.round(42 * (currentBrightness / 255))}%`;
   fpsValue.textContent = "60 FPS (Demo)";
 }
 
@@ -425,6 +466,14 @@ function triggerStepColor() {
   currentHueDeg = (currentHueDeg + 22) % 360;
   updateMoodColorDisplay(currentHueDeg, false);
   sendInput("c");
+}
+
+// Step Brightness (+25 / 255)
+function triggerStepBrightness() {
+  currentBrightness = currentBrightness + 25;
+  if (currentBrightness > 255) currentBrightness = 25;
+  updateBrightnessDisplay(currentBrightness, false);
+  sendInput("b");
 }
 
 // Player 1 Button Press
@@ -483,6 +532,7 @@ btnP2.addEventListener("click", triggerP2);
 btnToggleMode.addEventListener("click", triggerModeToggle);
 btnToggleGame.addEventListener("click", triggerGameToggle);
 btnStepColor.addEventListener("click", triggerStepColor);
+if (btnStepBrightness) btnStepBrightness.addEventListener("click", triggerStepBrightness);
 
 hueSlider.addEventListener("input", (e) => {
   updateMoodColorDisplay(parseFloat(e.target.value), true);
@@ -493,7 +543,17 @@ hueSlider.addEventListener("change", (e) => {
   sendInput(`h${arduinoHue}`);
 });
 
-// Keyboard Shortcuts: A = P1, L = P2, M = Mode, G = Game, C = Color
+if (brightnessSlider) {
+  brightnessSlider.addEventListener("input", (e) => {
+    updateBrightnessDisplay(parseInt(e.target.value, 10), true);
+  });
+
+  brightnessSlider.addEventListener("change", (e) => {
+    sendInput(`b${parseInt(e.target.value, 10)}`);
+  });
+}
+
+// Keyboard Shortcuts: A = P1, L = P2, M = Mode, G = Game, C = Color, B = Brightness
 window.addEventListener("keydown", (e) => {
   if (e.repeat) return;
   const key = e.key.toLowerCase();
@@ -502,10 +562,12 @@ window.addEventListener("keydown", (e) => {
   else if (key === "m") triggerModeToggle();
   else if (key === "g") triggerGameToggle();
   else if (key === "c") triggerStepColor();
+  else if (key === "b") triggerStepBrightness();
 });
 
-// Initialize mood color display (starts at 0° Red)
+// Initialize mood color & brightness displays
 updateMoodColorDisplay(0, false);
+updateBrightnessDisplay(255, false);
 
 // ----------------------------------------------------------------------------
 // 4. Optical & Environment Customization
