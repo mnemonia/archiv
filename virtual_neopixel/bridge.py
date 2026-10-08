@@ -200,7 +200,6 @@ def run_demo_simulation_loop():
         "Breathing / Pulse",
         "Twinkle / Sparkle",
         "Fire / Flame",
-        "Chase / Marquee",
         "Comet / Meteor",
         "Scanner / Cylon",
         "Color Wipe"
@@ -278,16 +277,7 @@ def run_demo_simulation_loop():
                     pixels.append([(base_r * factor) >> 8, (base_g * factor) >> 8, (base_b * factor) >> 8])
 
         elif mode_idx == 3:
-            # 4. Chase / Marquee
-            step = int(elapsed * 4.5) % 4
-            for i in range(NUM_LEDS):
-                if (i + step) % 4 == 0:
-                    pixels.append([min(255, base_r + 40), min(255, base_g + 40), min(255, base_b + 40)])
-                else:
-                    pixels.append([(base_r * 75) >> 8, (base_g * 75) >> 8, (base_b * 75) >> 8])
-
-        elif mode_idx == 4:
-            # 5. Comet / Meteor
+            # 4. Comet / Meteor
             sweep = (math.sin(elapsed * 0.5) + 1.0) * 0.5 * 59
             for i in range(NUM_LEDS):
                 dist = abs(i - sweep)
@@ -299,8 +289,8 @@ def run_demo_simulation_loop():
                 else:
                     pixels.append([(base_r * 65) >> 8, (base_g * 65) >> 8, (base_b * 65) >> 8])
 
-        elif mode_idx == 5:
-            # 6. Scanner / Cylon
+        elif mode_idx == 4:
+            # 5. Scanner / Cylon
             eye = 29.5 + 27.5 * math.sin(elapsed * 1.05)
             for i in range(NUM_LEDS):
                 dist = abs(i - eye)
@@ -313,7 +303,7 @@ def run_demo_simulation_loop():
                     pixels.append([(base_r * 60) >> 8, (base_g * 60) >> 8, (base_b * 60) >> 8])
 
         else:
-            # 7. Color Wipe
+            # 6. Color Wipe
             wipe_idx = int(elapsed * 5.5) % NUM_LEDS
             pal_idx = int(elapsed * 0.1) % 4
             wipe_hue = (demo_state["hue"] + pal_idx * 10922) % 65536
@@ -392,7 +382,7 @@ class VisualizerHTTPHandler(SimpleHTTPRequestHandler):
             if key:
                 k = key.strip().lower()
                 if k == 'm':
-                    demo_state["mode_idx"] = (demo_state["mode_idx"] + 1) % 7
+                    demo_state["mode_idx"] = (demo_state["mode_idx"] + 1) % 6
                     print(f"[Demo] Switched mode to {demo_state['mode_idx']}")
                 elif k == 'c':
                     demo_state["hue"] = (demo_state["hue"] + 4000) % 65536

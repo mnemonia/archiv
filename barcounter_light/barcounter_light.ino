@@ -12,22 +12,20 @@
  *       Analog Pin A3 reads potentiometer wiper (0-5V).
  *       Maps smoothly to full 16-bit rainbow spectrum (0..65535).
  *       Dynamically defines the initial- or mood-color for ALL modes!
- *   - 7 Ambient Visualization Modes (Ultra-slow, smooth, subtle, non-hectic):
+ *   - 6 Ambient Visualization Modes (Ultra-slow, smooth, subtle, non-hectic):
  *       1. Breathing / Pulse (7.5s Meditative Sine Breath in Rotary Base-Color)
  *       2. Twinkle / Sparkle (Slow Floating Candlelight & Starfield in Rotary Base-Color)
  *       3. Fire / Flame (Cozy Slow-Ember Hearth Fire in Rotary Flame Tint)
- *       4. Chase / Marquee (Vintage Slow-Crawling Theater Marquee in Rotary Base-Color)
- *       5. Comet / Meteor (Gentle Gliding Shooting Star in Rotary Base-Color)
- *       6. Scanner / Cylon (6.0s Smooth Larson Eye in Rotary Base-Color)
- *       7. Color Wipe (11s Meditative Chromatic Roll Anchored on Rotary Base-Color)
- *   - 7 Fast Competitive 2-Player 1-Button Games (One per mode):
+ *       4. Comet / Meteor (Gentle Gliding Shooting Star in Rotary Base-Color)
+ *       5. Scanner / Cylon (6.0s Smooth Larson Eye in Rotary Base-Color)
+ *       6. Color Wipe (11s Meditative Chromatic Roll Anchored on Rotary Base-Color)
+ *   - 6 Fast Competitive 2-Player 1-Button Games (One per mode):
  *       1. "Resonance Pulse" (Rhythm Wave Tug-of-War)
  *       2. "Sparkle Rush" (Nova Sparkle Reflex Deflector)
  *       3. "Flame Tug" (Bellows Forge Combustion Clash)
- *       4. "Marquee Intercept" (Phase-Lock Precision Target Catch)
- *       5. "Meteor Deflector" (High-Speed Comet Rally)
- *       6. "Cylon Clash" (Hyper-Pong Beam Duel)
- *       7. "Territory Paint" (Rapid Wipe Wars)
+ *       4. "Meteor Deflector" (High-Speed Comet Rally)
+ *       5. "Cylon Clash" (Hyper-Pong Beam Duel)
+ *       6. "Territory Paint" (Rapid Wipe Wars)
  *   - Ambient Illumination Guard:
  *       Enforces that average strip luminosity NEVER drops below 35% threshold,
  *       guaranteeing room / bar counter illumination even during games.
@@ -480,11 +478,10 @@ enum SystemMode {
   MODE_BREATHING_PULSE = 0,
   MODE_TWINKLE_SPARKLE = 1,
   MODE_FIRE_FLAME      = 2,
-  MODE_THEATER_CHASE   = 3,
-  MODE_COMET_METEOR    = 4,
-  MODE_CYLON_SCANNER   = 5,
-  MODE_COLOR_WIPE      = 6,
-  NUM_MODES            = 7
+  MODE_COMET_METEOR    = 3,
+  MODE_CYLON_SCANNER   = 4,
+  MODE_COLOR_WIPE      = 5,
+  NUM_MODES            = 6
 };
 
 SystemMode currentMode = MODE_BREATHING_PULSE;
@@ -848,116 +845,7 @@ public:
 FireFlameController fireMode;
 
 // ============================================================================
-// 11. Mode 4: Chase / Marquee & "Marquee Intercept" Game
-// ============================================================================
-class TheaterChaseController {
-private:
-  unsigned long lastUpdate = 0;
-  uint8_t stepOffset = 0;
-
-  int8_t targetScore = 0;
-  bool roundOver = false;
-  unsigned long roundOverTime = 0;
-
-public:
-  void resetGame() {
-    targetScore = 0;
-    roundOver = false;
-  }
-
-  void update(unsigned long currentMillis) {
-    unsigned long interval = inGameMode ? 32 : 220;
-    if (currentMillis - lastUpdate < interval) return;
-    lastUpdate = currentMillis;
-
-    stepOffset = (stepOffset + 1) % 4;
-
-    if (!inGameMode) {
-      // Ambient: Vintage slow theater marquee in Rotary Knob Base-Color!
-      uint8_t baseR = rotaryKnob.getR();
-      uint8_t baseG = rotaryKnob.getG();
-      uint8_t baseB = rotaryKnob.getB();
-
-      for (uint16_t i = 0; i < NUM_LEDS; i++) {
-        if ((i + stepOffset) % 4 == 0) {
-          strip.setPixelColor(i, NeoPixelDriver::Color(
-            min(255, (int)baseR + 40),
-            min(255, (int)baseG + 40),
-            min(255, (int)baseB + 40)
-          ));
-        } else {
-          strip.setPixelColor(i, NeoPixelDriver::Color(
-            (baseR * 75) >> 8,
-            (baseG * 75) >> 8,
-            (baseB * 75) >> 8
-          ));
-        }
-      }
-    } else {
-      // Game: Fast Marquee Intercept
-      if (roundOver) {
-        if (currentMillis - roundOverTime > 2000) resetGame();
-        return;
-      }
-
-      uint16_t activeHotIndex = ((uint32_t)stepOffset * NUM_LEDS) / 4;
-      uint16_t zoneRadius = max((uint16_t)1, (uint16_t)(NUM_LEDS * 0.07f + 0.5f));
-      uint16_t p1Center = NUM_LEDS / 4;
-      uint16_t p2Center = ((uint32_t)NUM_LEDS * 3) / 4;
-      uint16_t p1Start = (p1Center > zoneRadius) ? (p1Center - zoneRadius) : 0;
-      uint16_t p1End   = min((uint16_t)(NUM_LEDS - 1), (uint16_t)(p1Center + zoneRadius));
-      uint16_t p2Start = (p2Center > zoneRadius) ? (p2Center - zoneRadius) : 0;
-      uint16_t p2End   = min((uint16_t)(NUM_LEDS - 1), (uint16_t)(p2Center + zoneRadius));
-
-      if (btnP1.wasPressed()) {
-        if (activeHotIndex >= p1Start && activeHotIndex <= p1End) {
-          targetScore += 2;
-          if (targetScore >= 10) {
-            roundOver = true;
-            roundOverTime = currentMillis;
-          }
-        }
-      }
-
-      if (btnP2.wasPressed()) {
-        if (activeHotIndex >= p2Start && activeHotIndex <= p2End) {
-          targetScore -= 2;
-          if (targetScore <= -10) {
-            roundOver = true;
-            roundOverTime = currentMillis;
-          }
-        }
-      }
-
-      uint8_t baseR = rotaryKnob.getR();
-      uint8_t baseG = rotaryKnob.getG();
-      uint8_t baseB = rotaryKnob.getB();
-      for (uint16_t i = 0; i < NUM_LEDS; i++) {
-        strip.setPixelColor(i, NeoPixelDriver::Color((baseR * 70) >> 8, (baseG * 70) >> 8, (baseB * 70) >> 8));
-      }
-
-      for (uint16_t i = p1Start; i <= p1End; i++) strip.setPixelColor(i, NeoPixelDriver::Color(20, 90, 180));
-      for (uint16_t i = p2Start; i <= p2End; i++) strip.setPixelColor(i, NeoPixelDriver::Color(180, 70, 20));
-
-      for (uint16_t i = 0; i < NUM_LEDS; i++) {
-        if ((i + stepOffset) % 6 == 0) {
-          strip.setPixelColor(i, NeoPixelDriver::Color(255, 255, 220));
-        }
-      }
-
-      int16_t centerPos = NUM_LEDS / 2;
-      int16_t markerPos = centerPos + (int16_t)(((int32_t)targetScore * (NUM_LEDS / 3)) / 10);
-      markerPos = constrain(markerPos, 0, (int16_t)NUM_LEDS - 1);
-      strip.setPixelColor(markerPos, NeoPixelDriver::Color(255, 255, 255));
-    }
-    strip.show();
-  }
-};
-
-TheaterChaseController chaseMode;
-
-// ============================================================================
-// 12. Mode 5: Comet / Meteor & "Meteor Deflector" Game
+// 11. Mode 4: Comet / Meteor & "Meteor Deflector" Game
 // ============================================================================
 class CometMeteorController {
 private:
@@ -1083,7 +971,7 @@ public:
 CometMeteorController cometMode;
 
 // ============================================================================
-// 13. Mode 6: Scanner / Cylon & "Cylon Clash" Game
+// 12. Mode 5: Scanner / Cylon & "Cylon Clash" Game
 // ============================================================================
 class CylonScannerController {
 private:
@@ -1201,7 +1089,7 @@ public:
 CylonScannerController cylonMode;
 
 // ============================================================================
-// 14. Mode 7: Color Wipe & "Territory Paint / Wipe Wars" Game
+// 13. Mode 6: Color Wipe & "Territory Paint / Wipe Wars" Game
 // ============================================================================
 class ColorWipeController {
 private:
@@ -1282,7 +1170,7 @@ public:
 ColorWipeController wipeMode;
 
 // ============================================================================
-// 15. Serial Command Parser (Optional Virtual Control from Linux)
+// 14. Serial Command Parser (Optional Virtual Control from Linux)
 // ============================================================================
 void handleSerialCommands() {
   static char numBuf[8];
@@ -1372,7 +1260,6 @@ void handleSerialCommands() {
         pulseMode.resetGame();
         twinkleMode.resetGame();
         fireMode.resetGame();
-        chaseMode.resetGame();
         cometMode.resetGame();
         cylonMode.resetGame();
         wipeMode.resetGame();
@@ -1386,7 +1273,7 @@ void handleSerialCommands() {
 }
 
 // ============================================================================
-// 16. Arduino setup() and loop()
+// 15. Arduino setup() and loop()
 // ============================================================================
 void setup() {
   rotaryKnob.begin();
@@ -1420,7 +1307,7 @@ void loop() {
 
   handleSerialCommands();
 
-  // 2. Handle Mode Switch Button (Cycle through all 7 modes)
+  // 2. Handle Mode Switch Button (Cycle through all 6 modes)
   if (btnMode.wasPressed()) {
     currentMode = (SystemMode)(((int)currentMode + 1) % NUM_MODES);
     inGameMode = false;
@@ -1438,7 +1325,6 @@ void loop() {
         pulseMode.resetGame();
         twinkleMode.resetGame();
         fireMode.resetGame();
-        chaseMode.resetGame();
         cometMode.resetGame();
         cylonMode.resetGame();
         wipeMode.resetGame();
@@ -1451,7 +1337,6 @@ void loop() {
     case MODE_BREATHING_PULSE: pulseMode.update(currentMillis); break;
     case MODE_TWINKLE_SPARKLE: twinkleMode.update(currentMillis); break;
     case MODE_FIRE_FLAME:      fireMode.update(currentMillis); break;
-    case MODE_THEATER_CHASE:   chaseMode.update(currentMillis); break;
     case MODE_COMET_METEOR:    cometMode.update(currentMillis); break;
     case MODE_CYLON_SCANNER:   cylonMode.update(currentMillis); break;
     case MODE_COLOR_WIPE:      wipeMode.update(currentMillis); break;

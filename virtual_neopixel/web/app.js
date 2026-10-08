@@ -351,25 +351,7 @@ function runLocalDemoFallback() {
       ledBuffer[i] = [r, g, b];
     }
   } else if (mode === 3) {
-    // 4. Chase / Marquee: slow vintage crawling marquee in Rotary Mood-Color!
-    const step = Math.floor(localTime * 4.5) % 4;
-    for (let i = 0; i < NUM_LEDS; i++) {
-      if ((i + step) % 4 === 0) {
-        ledBuffer[i] = [
-          Math.min(255, baseR + 50),
-          Math.min(255, baseG + 50),
-          Math.min(255, baseB + 50)
-        ];
-      } else {
-        ledBuffer[i] = [
-          Math.round((baseR * 75) / 255),
-          Math.round((baseG * 75) / 255),
-          Math.round((baseB * 75) / 255)
-        ];
-      }
-    }
-  } else if (mode === 4) {
-    // 5. Comet / Meteor: 12s graceful gliding shooting star in Rotary Mood-Color!
+    // 4. Comet / Meteor: 12s graceful gliding shooting star in Rotary Mood-Color!
     const sweep = (Math.sin(localTime * 0.5) + 1.0) * 0.5 * 59;
     for (let i = 0; i < NUM_LEDS; i++) {
       const dist = Math.abs(i - sweep);
@@ -394,8 +376,8 @@ function runLocalDemoFallback() {
         ];
       }
     }
-  } else if (mode === 5) {
-    // 6. Scanner / Cylon: 6s smooth Larson eye in Rotary Mood-Color!
+  } else if (mode === 4) {
+    // 5. Scanner / Cylon: 6s smooth Larson eye in Rotary Mood-Color!
     const eye = 29.5 + 27.5 * Math.sin(localTime * 1.05);
     for (let i = 0; i < NUM_LEDS; i++) {
       const dist = Math.abs(i - eye);
@@ -421,7 +403,7 @@ function runLocalDemoFallback() {
       }
     }
   } else {
-    // 7. Color Wipe: progressive roll across harmonic offsets from Rotary Mood-Color!
+    // 6. Color Wipe: progressive roll across harmonic offsets from Rotary Mood-Color!
     const wipePos = Math.floor(localTime * 5.5) % NUM_LEDS;
     const paletteIdx = Math.floor(localTime * 0.1) % 4;
     const wipeHue = (currentHueDeg + paletteIdx * 60) % 360;
@@ -490,12 +472,11 @@ function triggerP2() {
   sendInput("2");
 }
 
-// 7 Modes Configuration
+// 6 Modes Configuration
 const modes = [
   { title: "Breathing / Pulse", game: "Resonance Pulse (Tap at the peak of the breath!)" },
   { title: "Twinkle / Sparkle", game: "Sparkle Rush (Reflect the Nova in your zone!)" },
   { title: "Fire / Flame", game: "Flame Tug (Pump bellows with steady 3-4 Hz rhythm!)" },
-  { title: "Chase / Marquee", game: "Marquee Intercept (Lock the rotating dot in your zone!)" },
   { title: "Comet / Meteor", game: "Meteor Deflector (Smash the comet back at your goal line!)" },
   { title: "Scanner / Cylon", game: "Cylon Clash (Return the hyper-fast laser beam!)" },
   { title: "Color Wipe", game: "Territory Paint (Rapid tap to wipe & paint the strip!)" }
