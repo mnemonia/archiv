@@ -32,7 +32,7 @@ The system provides two compile-time implementations in [`barcounter_light.ino`]
 
 | Component | Arduino Pin | Mode | Notes |
 | :--- | :--- | :--- | :--- |
-| **Rotary Color Knob** | `Pin A3` | `INPUT` (Analog) | Potentiometer wiper (outer terminals to 5V & GND). Maps 0..1023 to 0..65535 hue across full rainbow palette |
+| **Rotary Color Knob** | `Pin A3` | `INPUT` (Analog) | Potentiometer wiper (outer terminals to 5V & GND). Maps full dial (0..1010 counts) smoothly across complete rainbow (0..65535 hue); end stop (1012–1023 raw) adds pure White |
 | **Rotary Brightness Knob** | `Pin A2` | `INPUT` (Analog) | Potentiometer wiper (outer terminals to 5V & GND). Maps 0..1023 to 0..255 global brightness (0–100%) |
 | **Player 1 Button** | `Pin 2` | `INPUT_PULLUP` | Momentary pushbutton to GND |
 | **Player 2 Button** | `Pin 4` | `INPUT_PULLUP` | Momentary pushbutton to GND |
@@ -45,16 +45,16 @@ The system provides two compile-time implementations in [`barcounter_light.ino`]
 
 ## 3. Visualization Modes & Two-Player Competitive Games
 
-All 6 ambient modes dynamically draw their base mood color from the **Rotary Color Knob (Pin A3)** following the continuous rainbow spectrum (0° Red $\rightarrow$ 60° Yellow $\rightarrow$ 120° Green $\rightarrow$ 180° Cyan $\rightarrow$ 240° Blue $\rightarrow$ 300° Magenta $\rightarrow$ 360° Red):
+All 6 ambient modes dynamically draw their base mood color from the **Rotary Color Knob (Pin A3)** following the continuous rainbow spectrum (0° Red $\rightarrow$ 60° Yellow $\rightarrow$ 120° Green $\rightarrow$ 180° Cyan $\rightarrow$ 240° Blue $\rightarrow$ 300° Magenta $\rightarrow$ 360° Red), with pure White added at the end of the dial:
 
 | Mode | Ambient Behavior (Follows Rotary Color) | Competitive Game (Two 1-Button Controls) | Ambient Illumination Floor |
 | :--- | :--- | :--- | :--- |
-| **1. Breathing / Pulse** | Gentle sinusoidal breathing pulse (7.5s cycle) in rotary base color. | **"Resonance Pulse" (Rhythm Tug-of-War)**<br>An energy nexus breathes in the center. Tap your button at the apex of inhalation to push the node toward the opponent's goal. | Enforced $\ge 35\%$ average brightness. |
-| **2. Twinkle / Sparkle** | Starry fairy lights shimmering in rotary base color with white-hot spark envelopes. | **"Sparkle Rush" (Nova Reflector)**<br>A fast "Nova Sparkle" bounces across the strip. Press your button within your defense zone (P1: 0–8, P2: 51–59) to reflect it back. | Guaranteed $\ge 35\%$ ambient fairy sparkle. |
-| **3. Fire / Flame** | Thermodynamic heat simulation (Fire2012) ramped in rotary flame tint. | **"Flame Tug" (Bellows Forge Clash)**<br>Blue Forge (P1) vs. Red Forge (P2). Tapping pumps oxygen into your bellows. Cadence anti-spam rewards steady rhythm. | Embers ensure continuous $\ge 35\%$ hearth illumination. |
-| **4. Comet / Meteor** | Graceful gliding shooting star (12s sweep) with long glowing tail in rotary color. | **"Meteor Deflector" (High-Speed Return)**<br>Smash the incoming comet back at the goal line before it breaches. | Guaranteed $\ge 35\%$ baseline glow. |
-| **5. Scanner / Cylon** | Smooth Larson eye with cosine deceleration (6s sweep) in rotary color. | **"Cylon Clash" (Laser Beam Volley)**<br>Return the hyper-fast laser beam before it reaches your end. | Clamped to $\ge 35\%$ ambient floor. |
-| **6. Color Wipe** | Meditative progressive color roll across harmonic offsets from rotary base hue. | **"Territory Paint" (Rapid Wipe Wars)**<br>Rapid-tap tug-of-war painting the strip in your color from both sides. | Enforced $\ge 35\%$ average brightness. |
+| **1. Breathing / Pulse** | Gentle sinusoidal breathing pulse (7.5s cycle) in rotary base color (or pure White). | **"Resonance Pulse" (Rhythm Tug-of-War)**<br>An energy nexus breathes in the center. Tap your button at the apex of inhalation to push the node toward the opponent's goal. | Enforced $\ge 35\%$ average brightness. |
+| **2. Twinkle / Sparkle** | Starry fairy lights shimmering in rotary base color (or pure White shimmer) with white-hot spark envelopes. | **"Sparkle Rush" (Nova Reflector)**<br>A fast "Nova Sparkle" bounces across the strip. Press your button within your defense zone (P1: 0–8, P2: 51–59) to reflect it back. | Guaranteed $\ge 35\%$ ambient fairy sparkle. |
+| **3. Fire / Flame** | Thermodynamic heat simulation (Fire2012) ramped in rotary flame tint (or silver embers when White). | **"Flame Tug" (Bellows Forge Clash)**<br>Blue Forge (P1) vs. Red Forge (P2). Tapping pumps oxygen into your bellows. Cadence anti-spam rewards steady rhythm. | Embers ensure continuous $\ge 35\%$ hearth illumination. |
+| **4. Comet / Meteor** | Graceful gliding shooting star (12s sweep) with long glowing tail in rotary color (or elegant White). | **"Meteor Deflector" (High-Speed Return)**<br>Smash the incoming comet back at the goal line before it breaches. | Guaranteed $\ge 35\%$ baseline glow. |
+| **5. Scanner / Cylon** | Smooth Larson eye with cosine deceleration (6s sweep) in rotary color (or clean White). | **"Cylon Clash" (Laser Beam Volley)**<br>Return the hyper-fast laser beam before it reaches your end. | Clamped to $\ge 35\%$ ambient floor. |
+| **6. Color Wipe** | Meditative progressive color roll across harmonic offsets (or 4 warm/cool white tints when White). | **"Territory Paint" (Rapid Wipe Wars)**<br>Rapid-tap tug-of-war painting the strip in your color from both sides. | Enforced $\ge 35\%$ average brightness. |
 
 ---
 
@@ -74,7 +74,8 @@ Then open your browser (e.g. Firefox) at:
 - **`[L]` Key**: Player 2 Button
 - **`[M]` Key**: Toggle Mode (Cycles 1 through 6)
 - **`[G]` Key**: Start / Stop Competition Game
-- **`[C]` Key / UI Slider**: Step / Adjust Rotary Base Color (+22° ~ +4000/65535 hue per step)
+- **`[C]` Key / UI Slider**: Step / Adjust Rotary Base Color (Cycles full rainbow 0°..360° $\rightarrow$ White added at end, +22° ~ +4000/65535 hue per step)
+- **`[W]` Key / Serial**: Direct shortcut to set Rotary Base Color to pure White
 - **`[B]` Key / UI Slider**: Step / Adjust Global Brightness (+25 / 255 per step)
 
 ### Running Automated Protocol Verification:

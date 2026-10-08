@@ -10,7 +10,8 @@
  *       Implementation B: Direct Hardware Adafruit_NeoPixel Output (Production)
  *   - Global Rotary Knob Mood / Base-Color Control:
  *       Analog Pin A3 reads potentiometer wiper (0-5V).
- *       Maps smoothly to full 16-bit rainbow spectrum (0..65535).
+ *       Keeps full range of rainbow spectrum (0..65535 across 0..1010 counts),
+ *       with pure White added at the end of the dial (1012-1023 raw).
  *       Dynamically defines the initial- or mood-color for ALL modes!
  *   - 6 Ambient Visualization Modes (Ultra-slow, smooth, subtle, non-hectic):
  *       1. Breathing / Pulse (7.5s Meditative Sine Breath in Rotary Base-Color)
@@ -47,12 +48,12 @@
 #define BACKEND_ADAFRUIT_REAL    1  // Implementation B: Drive physical WS2812B strip via Adafruit library
 
 // >>> CONFIGURE ACTIVE TARGET HERE <<<
-#define STRIP_BACKEND            BACKEND_VIRTUAL_SERIAL
+#define STRIP_BACKEND            BACKEND_ADAFRUIT_REAL
 
 // ============================================================================
 // 2. Hardware Pin & Strip Configuration
 // ============================================================================
-#define NUM_LEDS                 60     // 60 LEDs per meter
+#define NUM_LEDS                 15     // 60 LEDs per meter
 #define LED_PIN                  6      // Output data pin for physical strip (Backend B)
 
 #define PIN_COLOR_KNOB           A3     // Rotary knob potentiometer wiper for global color setting
@@ -254,7 +255,7 @@ public:
 NeoPixelDriver strip;
 
 // ============================================================================
-// 4. Global Rotary Knob Controller (Rainbow Palette Mood / Base-Color)
+// 4. Global Rotary Knob Controller (Rainbow Palette Mood / Base-Color with White)
 // ============================================================================
 class RotaryColorKnob {
 private:
@@ -262,22 +263,46 @@ private:
   int lastRaw;
   uint16_t currentHue;
   uint8_t currentR, currentG, currentB;
+  bool isWhiteMode;
   unsigned long lastReadTime;
   bool virtualOverride;
   int potAnchorRaw;
 
+  // Thresholds for White zone added at the end of potentiometer travel (1012-1023 out of 1023)
+  static const int WHITE_ZONE_EXIT  = 1005;
+  static const int WHITE_ZONE_ENTER = 1015;
+
   void applyRaw(int raw) {
-    currentHue = (uint16_t)(((uint32_t)raw * 65535UL) / 1023UL);
-    uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
-    currentR = (uint8_t)(rgb >> 16);
-    currentG = (uint8_t)(rgb >> 8);
-    currentB = (uint8_t)rgb;
+    if (isWhiteMode) {
+      if (raw < WHITE_ZONE_EXIT) {
+        isWhiteMode = false;
+      }
+    } else {
+      if (raw > WHITE_ZONE_ENTER) {
+        isWhiteMode = true;
+      }
+    }
+
+    if (isWhiteMode) {
+      currentHue = 0;
+      currentR = 255;
+      currentG = 255;
+      currentB = 255;
+    } else {
+      // Keep full range of rainbow (0..65535 hue) across entire dial (0..1010 counts)
+      int clampedRaw = min(1010, max(0, raw));
+      currentHue = (uint16_t)(((uint32_t)clampedRaw * 65535UL) / 1010UL);
+      uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
+      currentR = (uint8_t)(rgb >> 16);
+      currentG = (uint8_t)(rgb >> 8);
+      currentB = (uint8_t)rgb;
+    }
   }
 
 public:
   RotaryColorKnob(uint8_t p)
     : pin(p), lastRaw(-1), currentHue(0), currentR(255), currentG(0), currentB(0),
-      lastReadTime(0), virtualOverride(false), potAnchorRaw(-1) {}
+      isWhiteMode(false), lastReadTime(0), virtualOverride(false), potAnchorRaw(-1) {}
 
   void begin() {
     pinMode(pin, INPUT);
@@ -311,6 +336,7 @@ public:
     }
   }
 
+  bool isWhite() const { return isWhiteMode; }
   uint16_t getHue() const { return currentHue; }
   uint8_t getR() const { return currentR; }
   uint8_t getG() const { return currentG; }
@@ -319,19 +345,40 @@ public:
     return ((uint32_t)currentR << 16) | ((uint32_t)currentG << 8) | currentB;
   }
 
+  void setWhite() {
+    isWhiteMode = true;
+    currentHue = 0;
+    currentR = 255;
+    currentG = 255;
+    currentB = 255;
+    virtualOverride = true;
+    potAnchorRaw = analogRead(pin);
+  }
+
   void setHue(uint16_t hue) {
+    isWhiteMode = false;
     currentHue = hue;
     uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
     currentR = (uint8_t)(rgb >> 16);
     currentG = (uint8_t)(rgb >> 8);
     currentB = (uint8_t)rgb;
-    // Enter virtual override mode and anchor the current ADC reading
     virtualOverride = true;
     potAnchorRaw = analogRead(pin);
   }
 
   void stepHue(int16_t delta) {
-    setHue(currentHue + delta);
+    if (isWhiteMode) {
+      setHue(0); // From White at end, wrap back to start of Rainbow (Red)
+    } else if (currentHue >= 65535) {
+      setWhite(); // Reached end of rainbow -> add White at end
+    } else {
+      uint32_t next = (uint32_t)currentHue + delta;
+      if (next >= 65535) {
+        setHue(65535); // Reach full end of rainbow
+      } else {
+        setHue((uint16_t)next);
+      }
+    }
   }
 
   bool isVirtualOverride() const { return virtualOverride; }
@@ -1115,10 +1162,22 @@ public:
 
     if (!inGameMode) {
       // Ambient: Progressive color wipe starting from Rotary Knob Base-Color!
-      // Cycles through harmonic offsets: 0 (base), +60°, +120°, +180° around the color wheel
-      uint16_t baseHue = rotaryKnob.getHue();
-      uint16_t wipeHue = baseHue + (paletteIdx * 10922);
-      uint32_t wipeCol = NeoPixelDriver::ColorHSV(wipeHue, 255, 255);
+      // If White is selected, cycles through 4 elegant white temperature tints.
+      // If Rainbow is selected, cycles through harmonic offsets: 0 (base), +60°, +120°, +180°
+      uint32_t wipeCol;
+      if (rotaryKnob.isWhite()) {
+        const uint32_t whiteTints[4] = {
+          NeoPixelDriver::Color(255, 255, 255), // Pure Crisp White
+          NeoPixelDriver::Color(255, 220, 170), // Warm Candle White
+          NeoPixelDriver::Color(215, 235, 255), // Cool Daylight White
+          NeoPixelDriver::Color(255, 245, 215)  // Soft Neutral White
+        };
+        wipeCol = whiteTints[paletteIdx % 4];
+      } else {
+        uint16_t baseHue = rotaryKnob.getHue();
+        uint16_t wipeHue = baseHue + (paletteIdx * 10922);
+        wipeCol = NeoPixelDriver::ColorHSV(wipeHue, 255, 255);
+      }
 
       strip.setPixelColor(wipeIdx, wipeCol);
       wipeIdx++;
@@ -1184,9 +1243,11 @@ void handleSerialCommands() {
     numBuf[numIdx] = '\0';
     long val = atol(numBuf);
     if (numTarget == TARGET_HUE) {
-      if (val < 0) val = 0;
-      if (val > 65535) val = 65535;
-      rotaryKnob.setHue((uint16_t)val);
+      if (val < 0 || val > 65535) {
+        rotaryKnob.setWhite();
+      } else {
+        rotaryKnob.setHue((uint16_t)val);
+      }
       global_color = rotaryKnob.getRGB();
     } else if (numTarget == TARGET_BRIGHTNESS) {
       if (val < 0) val = 0;
@@ -1214,9 +1275,11 @@ void handleSerialCommands() {
         if (numIdx > 0) {
           long val = atol(numBuf);
           if (numTarget == TARGET_HUE) {
-            if (val < 0) val = 0;
-            if (val > 65535) val = 65535;
-            rotaryKnob.setHue((uint16_t)val);
+            if (val < 0 || val > 65535) {
+              rotaryKnob.setWhite();
+            } else {
+              rotaryKnob.setHue((uint16_t)val);
+            }
             global_color = rotaryKnob.getRGB();
           } else if (numTarget == TARGET_BRIGHTNESS) {
             if (val < 0) val = 0;
@@ -1240,7 +1303,10 @@ void handleSerialCommands() {
       }
     }
 
-    if (c == 'h' || c == 'H') {
+    if (c == 'w' || c == 'W') {
+      rotaryKnob.setWhite();
+      global_color = rotaryKnob.getRGB();
+    } else if (c == 'h' || c == 'H') {
       numTarget = TARGET_HUE;
       numIdx = 0;
       lastDigitTime = millis();

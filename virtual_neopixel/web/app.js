@@ -43,8 +43,9 @@ let activeGame = false;
 let currentModeName = "Breathing / Pulse";
 let bloomIntensity = 0.85;
 
-let currentHueDeg = 0; // 0..360°
-let currentMoodRGB = [255, 0, 0]; // Default Red
+let currentHueDeg = 0; // 0..360° Rainbow, >360 White at end of rainbow
+let isWhiteMode = false;
+let currentMoodRGB = [255, 0, 0]; // Default Red at start of rainbow
 let currentBrightness = 255; // 0..255 Default 100%
 
 // Set initial optics
@@ -99,19 +100,37 @@ function throttledSendHue(hue) {
 }
 
 function updateMoodColorDisplay(deg, sendToArduino = true) {
-  currentHueDeg = ((deg % 360) + 360) % 360;
-  currentMoodRGB = hsvToRgb(currentHueDeg);
-  if (hueSlider) hueSlider.value = currentHueDeg;
-  if (colorPreview) {
-    colorPreview.style.background = `rgb(${currentMoodRGB[0]}, ${currentMoodRGB[1]}, ${currentMoodRGB[2]})`;
-    colorPreview.style.boxShadow = `0 0 8px rgba(${currentMoodRGB[0]}, ${currentMoodRGB[1]}, ${currentMoodRGB[2]}, 0.8)`;
-  }
-  if (hueValue) {
-    hueValue.textContent = `${Math.round(currentHueDeg)}° (${getHueName(currentHueDeg)})`;
-  }
-  if (sendToArduino) {
-    const arduinoHue = Math.round((currentHueDeg / 360.0) * 65535);
-    throttledSendHue(arduinoHue);
+  if (deg > 360 || deg === "white") {
+    isWhiteMode = true;
+    currentHueDeg = 375;
+    currentMoodRGB = [255, 255, 255];
+    if (hueSlider) hueSlider.value = 375;
+    if (colorPreview) {
+      colorPreview.style.background = "#ffffff";
+      colorPreview.style.boxShadow = "0 0 10px rgba(255, 255, 255, 0.9)";
+    }
+    if (hueValue) {
+      hueValue.textContent = "White (Pure)";
+    }
+    if (sendToArduino) {
+      sendInput("w");
+    }
+  } else {
+    isWhiteMode = false;
+    currentHueDeg = ((deg % 360) + 360) % 360;
+    currentMoodRGB = hsvToRgb(currentHueDeg);
+    if (hueSlider) hueSlider.value = currentHueDeg;
+    if (colorPreview) {
+      colorPreview.style.background = `rgb(${currentMoodRGB[0]}, ${currentMoodRGB[1]}, ${currentMoodRGB[2]})`;
+      colorPreview.style.boxShadow = `0 0 8px rgba(${currentMoodRGB[0]}, ${currentMoodRGB[1]}, ${currentMoodRGB[2]}, 0.8)`;
+    }
+    if (hueValue) {
+      hueValue.textContent = `${Math.round(currentHueDeg)}° (${getHueName(currentHueDeg)})`;
+    }
+    if (sendToArduino) {
+      const arduinoHue = Math.round((currentHueDeg / 360.0) * 65535);
+      throttledSendHue(arduinoHue);
+    }
   }
 }
 
@@ -406,8 +425,19 @@ function runLocalDemoFallback() {
     // 6. Color Wipe: progressive roll across harmonic offsets from Rotary Mood-Color!
     const wipePos = Math.floor(localTime * 5.5) % NUM_LEDS;
     const paletteIdx = Math.floor(localTime * 0.1) % 4;
-    const wipeHue = (currentHueDeg + paletteIdx * 60) % 360;
-    const col = hsvToRgb(wipeHue);
+    let col;
+    if (isWhiteMode) {
+      const whiteTints = [
+        [255, 255, 255],
+        [255, 220, 170],
+        [215, 235, 255],
+        [255, 245, 215]
+      ];
+      col = whiteTints[paletteIdx];
+    } else {
+      const wipeHue = (currentHueDeg + paletteIdx * 60) % 360;
+      col = hsvToRgb(wipeHue);
+    }
     for (let i = 0; i < NUM_LEDS; i++) {
       if (i <= wipePos) ledBuffer[i] = col;
       else ledBuffer[i] = [
@@ -443,11 +473,24 @@ async function sendInput(key) {
   }
 }
 
-// Step Mood Color (+22° ~ +4000/65535)
+// Step Mood Color (Keep full rainbow 0°..360° -> White added at end -> loop back to 0°)
 function triggerStepColor() {
-  currentHueDeg = (currentHueDeg + 22) % 360;
-  updateMoodColorDisplay(currentHueDeg, false);
-  sendInput("c");
+  if (isWhiteMode) {
+    updateMoodColorDisplay(0, false);
+    sendInput("c");
+  } else if (currentHueDeg >= 360) {
+    updateMoodColorDisplay(375, false); // Add White at end of rainbow
+    sendInput("c");
+  } else {
+    const next = currentHueDeg + 22;
+    if (next >= 360) {
+      updateMoodColorDisplay(360, false); // Complete full rainbow (360° Red)
+      sendInput("c");
+    } else {
+      updateMoodColorDisplay(next, false);
+      sendInput("c");
+    }
+  }
 }
 
 // Step Brightness (+25 / 255)
@@ -520,8 +563,13 @@ hueSlider.addEventListener("input", (e) => {
 });
 
 hueSlider.addEventListener("change", (e) => {
-  const arduinoHue = Math.round((parseFloat(e.target.value) / 360.0) * 65535);
-  sendInput(`h${arduinoHue}`);
+  const val = parseFloat(e.target.value);
+  if (val > 360) {
+    sendInput("w");
+  } else {
+    const arduinoHue = Math.round((val / 360.0) * 65535);
+    sendInput(`h${arduinoHue}`);
+  }
 });
 
 if (brightnessSlider) {

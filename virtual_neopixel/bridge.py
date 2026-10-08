@@ -155,6 +155,7 @@ def read_serial_loop(port_name, baud_rate):
 demo_state = {
     "mode_idx": 0,
     "hue": 0,          # 0..65535 matching Arduino RotaryColorKnob
+    "is_white": False, # White at end of rainbow selection
     "brightness": 255, # 0..255 matching Arduino RotaryBrightnessKnob
     "in_game": False
 }
@@ -222,7 +223,10 @@ def run_demo_simulation_loop():
 
         mode_idx = demo_state["mode_idx"]
         cur_mode = modes[mode_idx]
-        base_r, base_g, base_b = hsv_to_rgb(demo_state["hue"])
+        if demo_state.get("is_white", False):
+            base_r, base_g, base_b = (255, 255, 255)
+        else:
+            base_r, base_g, base_b = hsv_to_rgb(demo_state["hue"])
         pixels = []
 
         if mode_idx == 0:
@@ -306,11 +310,20 @@ def run_demo_simulation_loop():
             # 6. Color Wipe
             wipe_idx = int(elapsed * 5.5) % NUM_LEDS
             pal_idx = int(elapsed * 0.1) % 4
-            wipe_hue = (demo_state["hue"] + pal_idx * 10922) % 65536
-            wipe_col = hsv_to_rgb(wipe_hue)
+            if demo_state.get("is_white", False):
+                white_tints = [
+                    [255, 255, 255],
+                    [255, 220, 170],
+                    [215, 235, 255],
+                    [255, 245, 215]
+                ]
+                wipe_col = list(white_tints[pal_idx])
+            else:
+                wipe_hue = (demo_state["hue"] + pal_idx * 10922) % 65536
+                wipe_col = list(hsv_to_rgb(wipe_hue))
             for i in range(NUM_LEDS):
                 if i <= wipe_idx:
-                    pixels.append(wipe_col)
+                    pixels.append(list(wipe_col))
                 else:
                     pixels.append([(base_r * 60) >> 8, (base_g * 60) >> 8, (base_b * 60) >> 8])
 
@@ -385,13 +398,34 @@ class VisualizerHTTPHandler(SimpleHTTPRequestHandler):
                     demo_state["mode_idx"] = (demo_state["mode_idx"] + 1) % 6
                     print(f"[Demo] Switched mode to {demo_state['mode_idx']}")
                 elif k == 'c':
-                    demo_state["hue"] = (demo_state["hue"] + 4000) % 65536
-                    print(f"[Demo] Stepped hue to {demo_state['hue']}")
+                    if demo_state.get("is_white", False):
+                        demo_state["is_white"] = False
+                        demo_state["hue"] = 0
+                        print(f"[Demo] Stepped from White back to start of Rainbow Red ({demo_state['hue']})")
+                    elif demo_state["hue"] >= 65535:
+                        demo_state["is_white"] = True
+                        print("[Demo] Stepped to White at end of rainbow")
+                    else:
+                        new_hue = demo_state["hue"] + 4000
+                        if new_hue >= 65535:
+                            demo_state["hue"] = 65535
+                            print(f"[Demo] Stepped to full end of Rainbow Red ({demo_state['hue']})")
+                        else:
+                            demo_state["hue"] = new_hue
+                            print(f"[Demo] Stepped hue to {demo_state['hue']}")
+                elif k == 'w':
+                    demo_state["is_white"] = True
+                    print("[Demo] Set color to White")
                 elif k.startswith('h'):
                     try:
                         h_val = int(k[1:])
-                        demo_state["hue"] = max(0, min(65535, h_val))
-                        print(f"[Demo] Set hue to {demo_state['hue']}")
+                        if h_val < 0 or h_val >= 65536:
+                            demo_state["is_white"] = True
+                            print("[Demo] Set color to White (via h command)")
+                        else:
+                            demo_state["is_white"] = False
+                            demo_state["hue"] = max(0, min(65535, h_val))
+                            print(f"[Demo] Set hue to {demo_state['hue']}")
                     except ValueError:
                         pass
                 elif k == 'b':
