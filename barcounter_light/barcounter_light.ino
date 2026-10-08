@@ -93,7 +93,9 @@ public:
     clear();
 #if (STRIP_BACKEND == BACKEND_VIRTUAL_SERIAL)
     Serial.begin(SERIAL_BAUD);
-    Serial.println(F("\n[NEO_INIT:60_LEDS:BACKEND_VIRTUAL_SERIAL]"));
+    Serial.print(F("\n[NEO_INIT:LEDS="));
+    Serial.print(NUM_LEDS);
+    Serial.println(F(":BACKEND_VIRTUAL_SERIAL]"));
 #elif (STRIP_BACKEND == BACKEND_ADAFRUIT_REAL)
     realStrip.begin();
     realStrip.show();
@@ -395,17 +397,17 @@ private:
   unsigned long lastUpdate = 0;
   const unsigned long BREATH_PERIOD = 7500; // 7.5s ultra-slow soothing breath
 
-  int8_t nexusPosition;
+  int16_t nexusPosition;
   unsigned long p1Cooldown;
   unsigned long p2Cooldown;
   bool roundOver;
   unsigned long roundOverTime;
 
 public:
-  BreathingPulseController() : nexusPosition(30), p1Cooldown(0), p2Cooldown(0), roundOver(false) {}
+  BreathingPulseController() : nexusPosition(NUM_LEDS / 2), p1Cooldown(0), p2Cooldown(0), roundOver(false) {}
 
   void resetGame() {
-    nexusPosition = 30;
+    nexusPosition = NUM_LEDS / 2;
     p1Cooldown = 0;
     p2Cooldown = 0;
     roundOver = false;
@@ -437,15 +439,16 @@ public:
       }
 
       bool inResonance = (wave >= 0.88f);
+      int16_t pushStep = max(1, (int)(NUM_LEDS / 15)); // Proportional pulse push
 
       if (btnP1.wasPressed()) {
         if (currentMillis >= p1Cooldown) {
           if (inResonance) {
-            nexusPosition += 4;
-            if (nexusPosition >= 58) {
+            nexusPosition += pushStep;
+            if (nexusPosition >= (int16_t)NUM_LEDS - 2) {
               roundOver = true;
               roundOverTime = currentMillis;
-              nexusPosition = 59;
+              nexusPosition = NUM_LEDS - 1;
             }
           } else {
             p1Cooldown = currentMillis + 400;
@@ -456,7 +459,7 @@ public:
       if (btnP2.wasPressed()) {
         if (currentMillis >= p2Cooldown) {
           if (inResonance) {
-            nexusPosition -= 4;
+            nexusPosition -= pushStep;
             if (nexusPosition <= 1) {
               roundOver = true;
               roundOverTime = currentMillis;
@@ -476,14 +479,15 @@ public:
       uint32_t baseCol = NeoPixelDriver::Color(rBase, gBase, bBase);
       for (uint16_t i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, baseCol);
 
+      int glowWidth = max(2, (int)(NUM_LEDS * 0.13f + 0.5f));
       for (int i = 0; i <= nexusPosition; i++) {
         int dist = nexusPosition - i;
-        uint8_t b = (dist < 8) ? (255 - dist * 26) : 45;
+        uint8_t b = (dist < glowWidth) ? (255 - (dist * 210) / glowWidth) : 45;
         strip.setPixelColor(i, NeoPixelDriver::Color(15, (b * 130) >> 8, b));
       }
       for (int i = nexusPosition; i < NUM_LEDS; i++) {
         int dist = i - nexusPosition;
-        uint8_t r = (dist < 8) ? (255 - dist * 26) : 45;
+        uint8_t r = (dist < glowWidth) ? (255 - (dist * 210) / glowWidth) : 45;
         strip.setPixelColor(i, NeoPixelDriver::Color(r, (r * 65) >> 8, 15));
       }
 
@@ -511,7 +515,7 @@ private:
   unsigned long roundOverTime;
 
 public:
-  TwinkleSparkleController() : novaPos(30.0f), novaSpeed(0.95f), roundOver(false) {
+  TwinkleSparkleController() : novaPos((float)NUM_LEDS * 0.5f), novaSpeed(max(0.25f, (float)NUM_LEDS * (0.95f / 60.0f))), roundOver(false) {
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
       twinkleBrightness[i] = random(55, 160);
       twinkleDelta[i] = random(0, 2) == 0 ? 1 : -1;
@@ -519,8 +523,9 @@ public:
   }
 
   void resetGame() {
-    novaPos = 30.0f;
-    novaSpeed = (random(0, 2) == 0 ? 0.95f : -0.95f);
+    novaPos = (float)NUM_LEDS * 0.5f;
+    float baseSpeed = max(0.25f, (float)NUM_LEDS * (0.95f / 60.0f));
+    novaSpeed = (random(0, 2) == 0 ? baseSpeed : -baseSpeed);
     roundOver = false;
   }
 
@@ -568,23 +573,27 @@ public:
 
       novaPos += novaSpeed;
 
+      uint16_t shieldLeds = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100)); // ~15% defense zone
+      float maxSpeed = max(0.8f, (float)NUM_LEDS * (2.8f / 60.0f));
+
       if (btnP1.wasPressed()) {
-        if (novaPos >= 0.0f && novaPos <= 9.0f && novaSpeed < 0.0f) {
-          float bonus = (9.0f - novaPos) * 0.15f;
+        if (novaPos >= 0.0f && novaPos <= (float)shieldLeds && novaSpeed < 0.0f) {
+          float bonus = ((float)shieldLeds - novaPos) * (1.5f / (float)shieldLeds);
           novaSpeed = abs(novaSpeed) * 1.12f + bonus;
-          novaSpeed = min(novaSpeed, 2.8f);
+          novaSpeed = min(novaSpeed, maxSpeed);
         }
       }
 
       if (btnP2.wasPressed()) {
-        if (novaPos >= 50.0f && novaPos <= 59.0f && novaSpeed > 0.0f) {
-          float bonus = (novaPos - 50.0f) * 0.15f;
+        float p2ZoneStart = (float)(NUM_LEDS - 1 - shieldLeds);
+        if (novaPos >= p2ZoneStart && novaPos <= (float)(NUM_LEDS - 1) && novaSpeed > 0.0f) {
+          float bonus = (novaPos - p2ZoneStart) * (1.5f / (float)shieldLeds);
           novaSpeed = -(abs(novaSpeed) * 1.12f + bonus);
-          novaSpeed = max(novaSpeed, -2.8f);
+          novaSpeed = max(novaSpeed, -maxSpeed);
         }
       }
 
-      if (novaPos < -1.0f || novaPos > 60.0f) {
+      if (novaPos < -1.0f || novaPos > (float)NUM_LEDS) {
         roundOver = true;
         roundOverTime = currentMillis;
       }
@@ -600,9 +609,9 @@ public:
         strip.setPixelColor(i, NeoPixelDriver::Color(r, g, b));
       }
 
-      // Defense Shields
-      for (uint16_t i = 0; i < 9; i++) strip.setPixelColor(i, NeoPixelDriver::Color(30, 110, 210));
-      for (uint16_t i = 51; i < 60; i++) strip.setPixelColor(i, NeoPixelDriver::Color(210, 50, 140));
+      // Defense Shields (scaled to NUM_LEDS)
+      for (uint16_t i = 0; i < shieldLeds; i++) strip.setPixelColor(i, NeoPixelDriver::Color(30, 110, 210));
+      for (uint16_t i = NUM_LEDS - shieldLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, NeoPixelDriver::Color(210, 50, 140));
 
       int center = (int)round(novaPos);
       if (center >= 0 && center < NUM_LEDS) {
@@ -624,7 +633,7 @@ class FireFlameController {
 private:
   unsigned long lastUpdate = 0;
   uint8_t heat[NUM_LEDS];
-  int8_t flameClashPos;
+  int16_t flameClashPos;
   unsigned long lastTapP1;
   unsigned long lastTapP2;
   bool roundOver;
@@ -660,12 +669,12 @@ private:
   }
 
 public:
-  FireFlameController() : flameClashPos(30), lastTapP1(0), lastTapP2(0), roundOver(false) {
+  FireFlameController() : flameClashPos(NUM_LEDS / 2), lastTapP1(0), lastTapP2(0), roundOver(false) {
     memset(heat, 90, sizeof(heat));
   }
 
   void resetGame() {
-    flameClashPos = 30;
+    flameClashPos = NUM_LEDS / 2;
     roundOver = false;
   }
 
@@ -696,15 +705,17 @@ public:
         return;
       }
 
+      int16_t pushStep = max(1, (int)(NUM_LEDS / 30));
+
       if (btnP1.wasPressed()) {
         if (currentMillis - lastTapP1 > 120) {
           lastTapP1 = currentMillis;
-          flameClashPos += 2;
+          flameClashPos += pushStep;
           for (int j = 0; j <= flameClashPos; j++) heat[j] = min(255, heat[j] + 30);
-          if (flameClashPos >= 58) {
+          if (flameClashPos >= (int16_t)NUM_LEDS - 2) {
             roundOver = true;
             roundOverTime = currentMillis;
-            flameClashPos = 59;
+            flameClashPos = NUM_LEDS - 1;
           }
         }
       }
@@ -712,7 +723,7 @@ public:
       if (btnP2.wasPressed()) {
         if (currentMillis - lastTapP2 > 120) {
           lastTapP2 = currentMillis;
-          flameClashPos -= 2;
+          flameClashPos -= pushStep;
           for (int j = flameClashPos; j < NUM_LEDS; j++) heat[j] = min(255, heat[j] + 30);
           if (flameClashPos <= 1) {
             roundOver = true;
@@ -788,10 +799,17 @@ public:
         return;
       }
 
-      uint8_t activeHotIndex = (stepOffset * 15) % NUM_LEDS;
+      uint16_t activeHotIndex = ((uint32_t)stepOffset * NUM_LEDS) / 4;
+      uint16_t zoneRadius = max((uint16_t)1, (uint16_t)(NUM_LEDS * 0.07f + 0.5f));
+      uint16_t p1Center = NUM_LEDS / 4;
+      uint16_t p2Center = ((uint32_t)NUM_LEDS * 3) / 4;
+      uint16_t p1Start = (p1Center > zoneRadius) ? (p1Center - zoneRadius) : 0;
+      uint16_t p1End   = min((uint16_t)(NUM_LEDS - 1), (uint16_t)(p1Center + zoneRadius));
+      uint16_t p2Start = (p2Center > zoneRadius) ? (p2Center - zoneRadius) : 0;
+      uint16_t p2End   = min((uint16_t)(NUM_LEDS - 1), (uint16_t)(p2Center + zoneRadius));
 
       if (btnP1.wasPressed()) {
-        if (activeHotIndex >= 10 && activeHotIndex <= 18) {
+        if (activeHotIndex >= p1Start && activeHotIndex <= p1End) {
           targetScore += 2;
           if (targetScore >= 10) {
             roundOver = true;
@@ -801,7 +819,7 @@ public:
       }
 
       if (btnP2.wasPressed()) {
-        if (activeHotIndex >= 42 && activeHotIndex <= 50) {
+        if (activeHotIndex >= p2Start && activeHotIndex <= p2End) {
           targetScore -= 2;
           if (targetScore <= -10) {
             roundOver = true;
@@ -817,8 +835,8 @@ public:
         strip.setPixelColor(i, NeoPixelDriver::Color((baseR * 70) >> 8, (baseG * 70) >> 8, (baseB * 70) >> 8));
       }
 
-      for (int i = 10; i <= 18; i++) strip.setPixelColor(i, NeoPixelDriver::Color(20, 90, 180));
-      for (int i = 42; i <= 50; i++) strip.setPixelColor(i, NeoPixelDriver::Color(180, 70, 20));
+      for (uint16_t i = p1Start; i <= p1End; i++) strip.setPixelColor(i, NeoPixelDriver::Color(20, 90, 180));
+      for (uint16_t i = p2Start; i <= p2End; i++) strip.setPixelColor(i, NeoPixelDriver::Color(180, 70, 20));
 
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
         if ((i + stepOffset) % 6 == 0) {
@@ -826,8 +844,9 @@ public:
         }
       }
 
-      int markerPos = 30 + targetScore * 2;
-      markerPos = constrain(markerPos, 0, 59);
+      int16_t centerPos = NUM_LEDS / 2;
+      int16_t markerPos = centerPos + (int16_t)(((int32_t)targetScore * (NUM_LEDS / 3)) / 10);
+      markerPos = constrain(markerPos, 0, (int16_t)NUM_LEDS - 1);
       strip.setPixelColor(markerPos, NeoPixelDriver::Color(255, 255, 255));
     }
     strip.show();
@@ -846,15 +865,18 @@ private:
   float speed = 0.15f;
   int8_t direction = 1;
 
-  float gameMeteorPos = 30.0f;
-  float gameMeteorSpeed = 1.1f;
+  float gameMeteorPos;
+  float gameMeteorSpeed;
   bool roundOver = false;
   unsigned long roundOverTime = 0;
 
 public:
+  CometMeteorController() : gameMeteorPos((float)NUM_LEDS * 0.5f), gameMeteorSpeed(max(0.3f, (float)NUM_LEDS * (1.1f / 60.0f))) {}
+
   void resetGame() {
-    gameMeteorPos = 30.0f;
-    gameMeteorSpeed = (random(0, 2) == 0 ? 1.1f : -1.1f);
+    gameMeteorPos = (float)NUM_LEDS * 0.5f;
+    float baseSpeed = max(0.3f, (float)NUM_LEDS * (1.1f / 60.0f));
+    gameMeteorSpeed = (random(0, 2) == 0 ? baseSpeed : -baseSpeed);
     roundOver = false;
   }
 
@@ -869,9 +891,9 @@ public:
       uint8_t baseB = rotaryKnob.getB();
 
       headPos += speed * direction;
-      if (headPos >= 59.0f) {
+      if (headPos >= (float)(NUM_LEDS - 1)) {
         direction = -1;
-        headPos = 59.0f;
+        headPos = (float)(NUM_LEDS - 1);
       } else if (headPos <= 0.0f) {
         direction = 1;
         headPos = 0.0f;
@@ -886,12 +908,13 @@ public:
         ));
       }
 
-      // Comet tail fades in base color
-      for (int t = 0; t < 12; t++) {
+      // Comet tail fades in base color (scaled to NUM_LEDS)
+      uint16_t tailLength = max((uint16_t)3, (uint16_t)(NUM_LEDS * 0.20f + 0.5f));
+      for (uint16_t t = 0; t < tailLength; t++) {
         float p = headPos - (t * direction);
         int idx = (int)round(p);
         if (idx >= 0 && idx < NUM_LEDS) {
-          uint8_t factor = (12 - t) * 20;
+          uint8_t factor = (uint8_t)(((uint32_t)(tailLength - t) * 240) / tailLength);
           uint8_t r = (uint8_t)(((uint16_t)baseR * factor) >> 8);
           uint8_t g = (uint8_t)(((uint16_t)baseG * factor) >> 8);
           uint8_t b = (uint8_t)(((uint16_t)baseB * factor) >> 8);
@@ -911,24 +934,27 @@ public:
       }
 
       gameMeteorPos += gameMeteorSpeed;
+      uint16_t defenseLeds = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100)); // ~15%
+      float maxSpeed = max(0.8f, (float)NUM_LEDS * (3.2f / 60.0f));
 
       if (btnP1.wasPressed()) {
-        if (gameMeteorPos >= 0.0f && gameMeteorPos <= 9.0f && gameMeteorSpeed < 0.0f) {
-          float bonus = (9.0f - gameMeteorPos) * 0.18f;
+        if (gameMeteorPos >= 0.0f && gameMeteorPos <= (float)defenseLeds && gameMeteorSpeed < 0.0f) {
+          float bonus = ((float)defenseLeds - gameMeteorPos) * (1.8f / (float)defenseLeds);
           gameMeteorSpeed = abs(gameMeteorSpeed) * 1.14f + bonus;
-          gameMeteorSpeed = min(gameMeteorSpeed, 3.2f);
+          gameMeteorSpeed = min(gameMeteorSpeed, maxSpeed);
         }
       }
 
       if (btnP2.wasPressed()) {
-        if (gameMeteorPos >= 50.0f && gameMeteorPos <= 59.0f && gameMeteorSpeed > 0.0f) {
-          float bonus = (gameMeteorPos - 50.0f) * 0.18f;
+        float p2ZoneStart = (float)(NUM_LEDS - 1 - defenseLeds);
+        if (gameMeteorPos >= p2ZoneStart && gameMeteorPos <= (float)(NUM_LEDS - 1) && gameMeteorSpeed > 0.0f) {
+          float bonus = (gameMeteorPos - p2ZoneStart) * (1.8f / (float)defenseLeds);
           gameMeteorSpeed = -(abs(gameMeteorSpeed) * 1.14f + bonus);
-          gameMeteorSpeed = max(gameMeteorSpeed, -3.2f);
+          gameMeteorSpeed = max(gameMeteorSpeed, -maxSpeed);
         }
       }
 
-      if (gameMeteorPos < -1.0f || gameMeteorPos > 60.0f) {
+      if (gameMeteorPos < -1.0f || gameMeteorPos > (float)NUM_LEDS) {
         roundOver = true;
         roundOverTime = currentMillis;
       }
@@ -939,8 +965,8 @@ public:
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
         strip.setPixelColor(i, NeoPixelDriver::Color((baseR * 60) >> 8, (baseG * 60) >> 8, (baseB * 60) >> 8));
       }
-      for (int i = 0; i < 9; i++) strip.setPixelColor(i, NeoPixelDriver::Color(10, 80, 220));
-      for (int i = 51; i < 60; i++) strip.setPixelColor(i, NeoPixelDriver::Color(220, 60, 10));
+      for (uint16_t i = 0; i < defenseLeds; i++) strip.setPixelColor(i, NeoPixelDriver::Color(10, 80, 220));
+      for (uint16_t i = NUM_LEDS - defenseLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, NeoPixelDriver::Color(220, 60, 10));
 
       int idx = (int)round(gameMeteorPos);
       if (idx >= 0 && idx < NUM_LEDS) {
@@ -963,15 +989,18 @@ private:
   unsigned long lastUpdate = 0;
   const unsigned long SWEEP_PERIOD = 6000;
 
-  float puckPos = 30.0f;
-  float puckSpeed = 1.2f;
+  float puckPos;
+  float puckSpeed;
   bool roundOver = false;
   unsigned long roundOverTime = 0;
 
 public:
+  CylonScannerController() : puckPos((float)NUM_LEDS * 0.5f), puckSpeed(max(0.3f, (float)NUM_LEDS * (1.2f / 60.0f))) {}
+
   void resetGame() {
-    puckPos = 30.0f;
-    puckSpeed = (random(0, 2) == 0 ? 1.2f : -1.2f);
+    puckPos = (float)NUM_LEDS * 0.5f;
+    float baseSpeed = max(0.3f, (float)NUM_LEDS * (1.2f / 60.0f));
+    puckSpeed = (random(0, 2) == 0 ? baseSpeed : -baseSpeed);
     roundOver = false;
   }
 
@@ -986,7 +1015,11 @@ public:
       uint8_t baseB = rotaryKnob.getB();
 
       float phase = (float)(currentMillis % SWEEP_PERIOD) / (float)SWEEP_PERIOD;
-      float eyePos = 29.5f + 27.5f * sin(phase * 2.0f * PI);
+      float center = (float)(NUM_LEDS - 1) * 0.5f;
+      float margin = max(0.5f, min(2.0f, (float)NUM_LEDS * 0.05f));
+      float amplitude = max(0.5f, center - margin);
+      float eyePos = center + amplitude * sin(phase * 2.0f * PI);
+      float glowRadius = max(2.0f, min(6.0f, (float)NUM_LEDS * 0.1f));
 
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
         float dist = abs((float)i - eyePos);
@@ -996,8 +1029,8 @@ public:
             min(255, (int)baseG + 80),
             min(255, (int)baseB + 80)
           ));
-        } else if (dist < 6.0f) {
-          uint8_t glow = (uint8_t)(255 * (1.0f - dist / 6.0f));
+        } else if (dist < glowRadius) {
+          uint8_t glow = (uint8_t)(255 * (1.0f - dist / glowRadius));
           strip.setPixelColor(i, NeoPixelDriver::Color(
             ((uint16_t)baseR * glow) >> 8,
             ((uint16_t)baseG * glow) >> 8,
@@ -1019,24 +1052,27 @@ public:
       }
 
       puckPos += puckSpeed;
+      uint16_t defenseLeds = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100)); // ~15%
+      float maxSpeed = max(0.8f, (float)NUM_LEDS * (3.4f / 60.0f));
 
       if (btnP1.wasPressed()) {
-        if (puckPos >= 0.0f && puckPos <= 9.0f && puckSpeed < 0.0f) {
-          float bonus = (9.0f - puckPos) * 0.16f;
+        if (puckPos >= 0.0f && puckPos <= (float)defenseLeds && puckSpeed < 0.0f) {
+          float bonus = ((float)defenseLeds - puckPos) * (1.6f / (float)defenseLeds);
           puckSpeed = abs(puckSpeed) * 1.15f + bonus;
-          puckSpeed = min(puckSpeed, 3.4f);
+          puckSpeed = min(puckSpeed, maxSpeed);
         }
       }
 
       if (btnP2.wasPressed()) {
-        if (puckPos >= 50.0f && puckPos <= 59.0f && puckSpeed > 0.0f) {
-          float bonus = (puckPos - 50.0f) * 0.16f;
+        float p2ZoneStart = (float)(NUM_LEDS - 1 - defenseLeds);
+        if (puckPos >= p2ZoneStart && puckPos <= (float)(NUM_LEDS - 1) && puckSpeed > 0.0f) {
+          float bonus = (puckPos - p2ZoneStart) * (1.6f / (float)defenseLeds);
           puckSpeed = -(abs(puckSpeed) * 1.15f + bonus);
-          puckSpeed = max(puckSpeed, -3.4f);
+          puckSpeed = max(puckSpeed, -maxSpeed);
         }
       }
 
-      if (puckPos < -1.0f || puckPos > 60.0f) {
+      if (puckPos < -1.0f || puckPos > (float)NUM_LEDS) {
         roundOver = true;
         roundOverTime = currentMillis;
       }
@@ -1047,8 +1083,8 @@ public:
       for (uint16_t i = 0; i < NUM_LEDS; i++) {
         strip.setPixelColor(i, NeoPixelDriver::Color((baseR * 55) >> 8, (baseG * 55) >> 8, (baseB * 55) >> 8));
       }
-      for (int i = 0; i < 9; i++) strip.setPixelColor(i, NeoPixelDriver::Color(15, 95, 215));
-      for (int i = 51; i < 60; i++) strip.setPixelColor(i, NeoPixelDriver::Color(215, 75, 15));
+      for (uint16_t i = 0; i < defenseLeds; i++) strip.setPixelColor(i, NeoPixelDriver::Color(15, 95, 215));
+      for (uint16_t i = NUM_LEDS - defenseLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, NeoPixelDriver::Color(215, 75, 15));
 
       int idx = (int)round(puckPos);
       if (idx >= 0 && idx < NUM_LEDS) {
@@ -1069,16 +1105,18 @@ CylonScannerController cylonMode;
 class ColorWipeController {
 private:
   unsigned long lastUpdate = 0;
-  uint8_t wipeIdx = 0;
+  uint16_t wipeIdx = 0;
   uint8_t paletteIdx = 0;
 
-  int8_t paintBoundary = 30;
+  int16_t paintBoundary;
   bool roundOver = false;
   unsigned long roundOverTime = 0;
 
 public:
+  ColorWipeController() : wipeIdx(0), paletteIdx(0), paintBoundary(NUM_LEDS / 2), roundOver(false), roundOverTime(0) {}
+
   void resetGame() {
-    paintBoundary = 30;
+    paintBoundary = NUM_LEDS / 2;
     roundOver = false;
   }
 
@@ -1106,17 +1144,19 @@ public:
         return;
       }
 
+      int16_t pushStep = max(1, (int)(NUM_LEDS / 30));
+
       if (btnP1.wasPressed()) {
-        paintBoundary += 2;
-        if (paintBoundary >= 59) {
+        paintBoundary += pushStep;
+        if (paintBoundary >= (int16_t)NUM_LEDS - 1) {
           roundOver = true;
           roundOverTime = currentMillis;
-          paintBoundary = 59;
+          paintBoundary = NUM_LEDS - 1;
         }
       }
 
       if (btnP2.wasPressed()) {
-        paintBoundary -= 2;
+        paintBoundary -= pushStep;
         if (paintBoundary <= 0) {
           roundOver = true;
           roundOverTime = currentMillis;

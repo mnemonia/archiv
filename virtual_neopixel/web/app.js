@@ -116,14 +116,15 @@ function drawStrip() {
   stripCtx.lineTo(width, height - 12);
   stripCtx.stroke();
 
-  // Spacing: 60 LEDs evenly pitched
-  const pitch = width / NUM_LEDS;
+  // Spacing: LEDs evenly pitched across strip
+  const numLeds = ledBuffer.length;
+  const pitch = width / numLeds;
   const ledSize = Math.min(pitch * 0.75, 26);
 
   // Clear Ambient Glow Canvas
   glowCtx.clearRect(0, 0, glowCanvas.width, glowCanvas.height);
 
-  for (let i = 0; i < NUM_LEDS; i++) {
+  for (let i = 0; i < numLeds; i++) {
     const [r, g, b] = ledBuffer[i];
     const centerX = i * pitch + pitch / 2;
     const centerY = height / 2;
@@ -201,7 +202,7 @@ async function fetchFrame() {
     const res = await fetch("/api/frame", { cache: "no-store" });
     if (res.ok) {
       const data = await res.json();
-      if (data.leds && data.leds.length === NUM_LEDS) {
+      if (data.leds && data.leds.length > 0) {
         ledBuffer = data.leds;
       }
       fpsValue.textContent = `${data.fps} FPS`;

@@ -100,7 +100,7 @@ def read_serial_loop(port_name, baud_rate):
                 if len(meta) < 2:
                     continue
                 cmd, count = meta[0], meta[1]
-                if cmd != 0x01 or count != NUM_LEDS:
+                if cmd != 0x01 or count == 0:
                     continue
 
                 # 3. Read 180 bytes RGB payload
