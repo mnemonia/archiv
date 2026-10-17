@@ -48,11 +48,13 @@ The controller implements three distinct lighting modes using an object-oriented
 ---
 
 ### Mode 2: `ConcertSmoothRGBBreath`
-* **Mood & Visual Character**: Fluid, immersive ambient illumination designed for music playback and lounge settings.
+* **Mood & Visual Character**: Ultra-slow, fluid, and serene ambient illumination designed for music listening, lounge environments, and meditative spaces.
 * **Animation Dynamics**:
-  * **Circulating Chromatic Gradient**: Maps the complete $360^\circ$ RGB color wheel around the 5.0-meter perimeter. All colors flow continuously along the edges of the rectangle (`pixelHue = baseHue + i * 256 / NUM_LEDS`).
-  * **Chromatic Drift**: The root hue rotates smoothly across time over a $\sim 11$-second rotation cycle.
-  * **Synchronized Breathing Envelope**: A sine-wave breath curve (`BREATH_PERIOD = 4000 ms`) swells and dims the entire strip's intensity between **35% and 85%** in tandem with the color roll.
+  * **Ultra-Slow 300-Second Full RGB Rotation**: The base color wheel rotates through the full $360^\circ$ spectrum over **300 seconds (5 full minutes)** (`COLOR_ROTATION_PERIOD_MS = 300000 ms`).
+  * **Super Smooth 16-Bit Sub-Hue Blending**: Uses FastLED's `blend()` with 8-bit fractional interpolation between adjacent integer hues ($65,536$ continuous color micro-steps). Completely eliminates discrete color jumping, ensuring imperceptibly smooth analog-like color drift.
+  * **Planar Wave through the Rectangle**: A gentle traveling brightness wave sweeps across the $2.0\,\text{m}$ width over a leisurely **10.0-second period** using FastLED's 16-bit sinusoidal interpolation (`sin16`).
+  * **Vis-à-Vis Color & Wave Synchronization**: Edge 0 (Bottom) and Edge 2 (Top) are mirrored across the $X$-axis ($x_{\text{top}} = 269 - i$). The LED directly opposite across the frame (vis-à-vis) receives the **exact same color and wave brightness/phase** at every point along the 2.0-meter span.
+  * **Overarching Breathing Envelope**: A gentle 8.0-second respiratory wave (`BREATH_PERIOD_MS = 8000 ms`) slowly modulates overall luminosity between $80\%$ and $100\%$.
 * **Update Cadence**: 50 FPS (20 ms interval).
 
 ---

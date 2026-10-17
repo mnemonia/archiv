@@ -21,8 +21,9 @@
  *        Cozy warm-white incandescent glow (~2700K) with a gentle, meditative
  *        low-frequency sinusoidal breathing pulse across the entire frame.
  *   2. ConcertSmoothRGBBreath:
- *        Vibrant full-spectrum rainbow flowing continuously around the perimeter
- *        coupled with a rhythmic breathing wave that swells and dims in sync.
+ *        Synchronized planar wave moving through the 2.0m x 0.5m rectangle.
+ *        Color and wave on Edge 0 (Bottom) and Edge 2 (Top) are matched on
+ *        the LEDs vis-a-vis each other across the frame.
  *   3. PartyMeteorSparkle:
  *        High-energy party mode featuring multiple meteors racing around the
  *        rectangular perimeter leaving fading trails, interspersed with random
@@ -71,7 +72,47 @@
 CRGB leds[NUM_LEDS];
 
 // ============================================================================
-// 2. Hardware Selector Configuration (3-Step Switch Knob)
+// 2. State Machine Enums & Forward Declarations
+// Must be defined before any function definitions to ensure Arduino auto-generated
+// prototypes find ModeId in scope.
+// ============================================================================
+enum ModeId : uint8_t {
+  MODE_NORMAL_PULSING_WARM_WHITE = 0,
+  MODE_CONCERT_SMOOTH_RGB_BREATH = 1,
+  MODE_PARTY_METEOR_SPARKLE      = 2
+};
+
+// Explicit Forward Declarations
+uint8_t getLedX(uint16_t index);
+void applyMode(ModeId mode);
+ModeId readSelectorHardware(ModeId currentMode);
+
+// ============================================================================
+// Geometry Helper: Map any strip index (0..299) to X-coordinate (0..119)
+// Edge 0 (Bottom): 0 .. 119 -> X = 0 .. 119
+// Edge 1 (Right): 120 .. 149 -> X = 119
+// Edge 2 (Top):   150 .. 269 -> X = 119 .. 0 (269 - i; vis-a-vis matched to Edge 0)
+// Edge 3 (Left):  270 .. 299 -> X = 0
+// ============================================================================
+inline uint8_t getLedX(uint16_t index) {
+  if (index < LEDS_SIDE_BOTTOM) {
+    // Edge 0: Bottom (Indices 0 .. 119) -> X = 0 .. 119
+    return (uint8_t)index;
+  } else if (index < LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT) {
+    // Edge 1: Right (Indices 120 .. 149) -> X = 119
+    return (uint8_t)(LEDS_SIDE_BOTTOM - 1);
+  } else if (index < LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP) {
+    // Edge 2: Top (Indices 150 .. 269) -> X = 119 .. 0
+    const uint16_t topEndIndex = LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP - 1; // 269
+    return (uint8_t)(topEndIndex - index);
+  } else {
+    // Edge 3: Left (Indices 270 .. 299) -> X = 0
+    return 0;
+  }
+}
+
+// ============================================================================
+// 3. Hardware Selector Configuration (3-Step Switch Knob)
 // ============================================================================
 #define SELECTOR_DIGITAL_SWITCH 1  // 2-Pin ON-OFF-ON toggle / 3-step rotary switch
 #define SELECTOR_ANALOG_KNOB    2  // 1-Pin potentiometer knob on analog pin with 3 steps
@@ -91,14 +132,8 @@ const int THRESHOLD_HIGH   = 682;
 const int HYSTERESIS       = 35;
 
 // ============================================================================
-// 3. State Machine Enums & Base Class
+// 4. State Machine Base Class
 // ============================================================================
-enum ModeId {
-  MODE_NORMAL_PULSING_WARM_WHITE = 0,
-  MODE_CONCERT_SMOOTH_RGB_BREATH = 1,
-  MODE_PARTY_METEOR_SPARKLE      = 2
-};
-
 class LightContext;
 
 class LightState {
@@ -196,22 +231,31 @@ public:
 
 // ============================================================================
 // 6. Mode 2: ConcertSmoothRGBBreath
-// Full-spectrum rainbow circulating along the rectangle perimeter,
-// combined with a synchronized breathing brightness wave.
+// Synchronized, slow planar wave moving gracefully through the 2.0m x 0.5m
+// rectangle plane. Features a 300-second (5-minute) full RGB chromatic rotation
+// with sub-hue linear blending (blend) and 16-bit sinusoidal wave interpolation
+// (sin16) for super smooth, continuous color drift and wave motion.
+// Edge 0 (Bottom) and Edge 2 (Top) are perfectly matched vis-a-vis across the frame.
 // ============================================================================
 class ConcertSmoothRGBBreathState : public LightState {
 private:
   unsigned long lastUpdateMillis = 0;
-  const unsigned long UPDATE_INTERVAL = 20; // 50 FPS smooth animation
-  const unsigned long BREATH_PERIOD = 4000;   // 4.0 seconds breathing period
-  uint16_t hueAccumulator = 0;
+  const unsigned long UPDATE_INTERVAL = 25; // 40 FPS rock-solid update interval
+
+  // Ultra-slow, serene timing constants
+  const unsigned long COLOR_ROTATION_PERIOD_MS = 300000UL; // 300 seconds (5 min) full RGB rotation
+  const unsigned long WAVE_PERIOD_MS           = 10000UL;  // 10.0 seconds to glide across 2.0m plane
+  const unsigned long BREATH_PERIOD_MS         = 8000UL;   // 8.0 seconds gentle respiratory breath cycle
 
 public:
   ModeId getId() const override { return MODE_CONCERT_SMOOTH_RGB_BREATH; }
   const char* getName() const override { return "ConcertSmoothRGBBreath"; }
 
   void enter(LightContext* ctx) override {
-    FastLED.setBrightness(255);
+    // Disable temporal dithering to prevent high-frequency shimmer/flicker
+    FastLED.setDither(0);
+    // Set a steady, calibrated brightness ceiling (prevents voltage sag & power-limiter hunting)
+    FastLED.setBrightness(180);
     lastUpdateMillis = 0;
   }
 
@@ -219,20 +263,54 @@ public:
     if (currentMillis - lastUpdateMillis < UPDATE_INTERVAL) return;
     lastUpdateMillis = currentMillis;
 
-    // 1. Advance chromatic hue counter smoothly
-    hueAccumulator += 140;
-    uint8_t baseHue = (uint8_t)(hueAccumulator >> 8);
+    // 1. Full 360-degree color rotation over 300 seconds (16-bit precision: 0..65535)
+    uint32_t colorTime = currentMillis % COLOR_ROTATION_PERIOD_MS;
+    uint16_t globalHue16 = (uint16_t)((colorTime * 65536ULL) / COLOR_ROTATION_PERIOD_MS);
 
-    // 2. Calculate breathing brightness wave (35% to 85% range)
-    float phase = (float)(currentMillis % BREATH_PERIOD) / (float)BREATH_PERIOD;
-    float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
-    uint8_t breathVal = (uint8_t)(90 + wave * (215 - 90)); // Range 90 .. 215
+    // 2. Slow planar wave progress (16-bit precision: 0..65535 over 10.0 seconds)
+    uint32_t waveTime = currentMillis % WAVE_PERIOD_MS;
+    uint16_t waveProgress16 = (uint16_t)((waveTime * 65536ULL) / WAVE_PERIOD_MS);
 
-    // 3. Render rainbow gradient circulating around the 5m rectangular perimeter
-    for (uint16_t i = 0; i < NUM_LEDS; i++) {
-      uint8_t pixelHue = baseHue + (uint8_t)((uint32_t)i * 256UL / NUM_LEDS);
-      leds[i] = CHSV(pixelHue, 240, breathVal);
+    // 3. Gentle overarching breath envelope (8.0 seconds cycle, 16-bit sine: sin16)
+    uint32_t breathTime = currentMillis % BREATH_PERIOD_MS;
+    uint16_t breathAngle16 = (uint16_t)((breathTime * 65536ULL) / BREATH_PERIOD_MS);
+    uint16_t breathSine16 = (uint16_t)(sin16(breathAngle16) + 32768); // 0 .. 65535
+    // Modulate breath smoothly between 80% and 100% (scale factor 204 .. 255)
+    uint8_t breathScale = 204 + (uint8_t)(((uint32_t)breathSine16 * 51UL) >> 16);
+
+    const uint16_t topEndIndex = LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP - 1; // 269
+
+    // 4. Render 120 positions along the 2.0m width (mirrored on Edge 0 and Edge 2)
+    for (uint16_t x = 0; x < LEDS_SIDE_BOTTOM; x++) {
+      uint16_t spatialPhase16 = (uint16_t)(((uint32_t)x * 65536UL) / LEDS_SIDE_BOTTOM);
+
+      // Planar traveling wave along X-axis: 16-bit sin16 for super smooth brightness
+      uint16_t waveAngle16 = waveProgress16 - spatialPhase16;
+      uint16_t waveVal16 = (uint16_t)(sin16(waveAngle16) + 32768); // 0 .. 65535
+
+      // Modulate local brightness smoothly between 70 (~27%) and 240 (~94%)
+      uint8_t localBrightness = 70 + (uint8_t)(((uint32_t)waveVal16 * 170UL) >> 16);
+      uint8_t finalBrightness = scale8(localBrightness, breathScale);
+
+      // Harmonious spatial color offset across the 2.0m width (subtle 180° spread)
+      uint16_t spatialHue16 = (uint16_t)(((uint32_t)x * 32768UL) / LEDS_SIDE_BOTTOM);
+      uint16_t ledHue16 = globalHue16 - spatialHue16;
+
+      // Continuous 16-bit color lookup with native FastLED linear interpolation
+      // and scale8_video brightness scaling (completely artifact-free)
+      CRGB pixelColor = ColorFromPaletteExtended(RainbowColors_p, ledHue16, finalBrightness, LINEARBLEND);
+
+      // Apply to Edge 0 (Bottom) and Edge 2 (Top) vis-a-vis
+      leds[x] = pixelColor;
+      leds[topEndIndex - x] = pixelColor;
     }
+
+    // 5. Fill Edge 1 (Right vertical) to match rightmost LED seamlessly
+    fill_solid(&leds[LEDS_SIDE_BOTTOM], LEDS_SIDE_RIGHT, leds[LEDS_SIDE_BOTTOM - 1]);
+
+    // 6. Fill Edge 3 (Left vertical) to match leftmost LED seamlessly
+    fill_solid(&leds[NUM_LEDS - LEDS_SIDE_LEFT], LEDS_SIDE_LEFT, leds[0]);
+
     FastLED.show();
   }
 };
@@ -338,14 +416,14 @@ ModeId readSelectorHardware(ModeId currentMode) {
   int valLeft  = digitalRead(PIN_SWITCH_STEP1);
   int valRight = digitalRead(PIN_SWITCH_STEP3);
 
-  if (valLeft == LOW) {
-    return MODE_NORMAL_PULSING_WARM_WHITE; // Step 1 (Left)
-  } else if (valRight == LOW) {
-    return MODE_PARTY_METEOR_SPARKLE;      // Step 3 (Right)
-  } else {
-    return MODE_CONCERT_SMOOTH_RGB_BREATH; // Step 2 (Center / Open)
-  }
-  //return MODE_NORMAL_PULSING_WARM_WHITE;
+  // if (valLeft == LOW) {
+  //   return MODE_NORMAL_PULSING_WARM_WHITE; // Step 1 (Left)
+  // } else if (valRight == LOW) {
+  //   return MODE_PARTY_METEOR_SPARKLE;      // Step 3 (Right)
+  // } else {
+  //   return MODE_CONCERT_SMOOTH_RGB_BREATH; // Step 2 (Center / Open)
+  // }
+  return MODE_CONCERT_SMOOTH_RGB_BREATH;
 
 #elif (ACTIVE_SELECTOR == SELECTOR_ANALOG_KNOB)
   int rawVal = analogRead(PIN_ANALOG_KNOB);
@@ -389,8 +467,10 @@ void setup() {
 
   // Initialize FastLED for SK6812 RGB strip (GRB color ordering)
   FastLED.addLeds<SK6812, LED_PIN, GRB>(leds, NUM_LEDS);
-  // Protect power supply (5V, 2500 mA max current limiting)
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, 2500);
+  // Disable temporal dithering to eliminate high-frequency 25-50 Hz flicker
+  FastLED.setDither(0);
+  // Set fixed brightness ceiling (prevents power supply brownout and dynamic limiter hunting)
+  FastLED.setBrightness(180);
   FastLED.clear();
   FastLED.show();
 
