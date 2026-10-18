@@ -59,14 +59,28 @@ The controller implements three distinct lighting modes using an object-oriented
 
 ---
 
-### Mode 3: `PartyMeteorSparkle`
-* **Mood & Visual Character**: High-energy, dynamic celebratory mode combining fast-moving comets and random glitter.
-* **Animation Dynamics**:
-  * **Triple Meteor Chase**: Three equidistant meteors (spaced ~116 LEDs apart) race around the 350-LED perimeter.
-  * **Comet Trails**: On each frame, previous pixel values decay exponentially using FastLED's `fadeToBlackBy(leds, NUM_LEDS, 50)`, creating smooth, trailing tails behind each meteor head.
-  * **Chromatic Meteor Heads**: Meteor heads cycle hues as they travel, capped by leading white-hot tips.
-  * **Random Sparkles / Glitter**: Every frame generates random starlight sparkles (alternating between intense white flashes and saturated neon points) that pop onto random LEDs and naturally decay into the background.
-* **Update Cadence**: $\sim 55$ FPS (18 ms interval).
+### Mode 3: `PartyHUEMeteorSparkle`
+* **Mood & Visual Character**: Ultra-vibrant, multifaceted party spectacle combining dynamic perimeter meteors, starlight sparkles, and cycling atmospheric background HUE behaviors.
+* **Three Cycling HUE Behaviors (Random Order & Random Durations)**:
+  * The background continuously transitions through three distinct lighting behaviors, chosen in random order with random durations ($8\text{--}22\text{ seconds}$ each):
+    1. **`SmoothHUETransition`**: Fluid, flowing atmospheric ambient rainbow gradient continuously gliding along the 2.36 m rectangular span. Kept at moderate luminance (~35%) to give high contrast for the meteors.
+    2. **`RawPoliceAlarmLights`**: High-voltage emergency strobe bar emulation. Generates authentic alternating quad-strobes in deep Red (left half, $X < 71$) and electric Blue (right half, $X \ge 71$) with dark inter-flash gaps for high-contrast impact.
+    3. **`Supernova`**: Multi-phase cosmic explosion cycle:
+       - *Buildup*: Accelerating deep cosmic magenta pulsation.
+       - *Detonation*: Dazzling white-hot stellar explosion flashing across the entire frame.
+       - *Shockwave Expansion*: High-speed radiant shockwave expanding outward from the center to both perimeter edges, leaving behind expanding fiery nebula plasma.
+* **Meteors (Stable Random Color, Not Affected by Behavior)**:
+  * **Independent Stable Random Colors**: When a meteor spawns, it is assigned a random, highly saturated color (`CHSV(random8(), 255, 255)`). This color stays **strictly stable from launch to conclusion** and is never shifted or desaturated by the active background behavior.
+  * **Smooth Disappearing Tails**: Each meteor renders an analytical non-linear tail ($22\text{--}37\text{ LEDs}$). As the meteor completes its journey (`NUM_LEDS + tailLength`), the tail gracefully clears off the strip before a new meteor is launched with a fresh random color.
+  * **Overlay Blending**: Meteors are composited using alpha overlay blending (`blend(background, meteorColor, alpha)`), ensuring that meteor heads (with white-hot cores) and luminous tails cleanly dominate over any background behavior without color distortion (e.g., a green meteor retains its pure green color even while traversing red police strobes).
+* **Dynamic Starlight Sparkles**:
+  * An independent sparkle layer randomly ignites brilliant pure-white and neon glints across the perimeter, creating an energetic diamond sparkle effect that organically decays over several frames.
+* **Update Cadence**: 50 FPS (20 ms interval).
+
+---
+
+### Mode 4 (Legacy): `PartyMeteorSparkle`
+* Classic multi-meteor perimeter chase with fading comet tails (`fadeToBlackBy`) and random glitter.
 
 ---
 
@@ -84,7 +98,7 @@ Uses an **ON-OFF-ON 3-position toggle switch** or a **3-step rotary switch** wir
 | :--- | :---: | :---: | :--- | :--- |
 | **Step 1 (Left)** | `LOW` | `HIGH` | **`NormalPulsingWarmWhite`** | Boot default |
 | **Step 2 (Center)** | `HIGH` | `HIGH` | **`ConcertSmoothRGBBreath`** | Open / floating position |
-| **Step 3 (Right)** | `HIGH` | `LOW` | **`PartyMeteorSparkle`** | Switched to GND |
+| **Step 3 (Right)** | `HIGH` | `LOW` | **`PartyHUEMeteorSparkle`** | Switched to GND |
 
 *Includes a 50 ms debounce filter to prevent state flapping during mechanical switching.*
 
@@ -98,7 +112,7 @@ Set `#define ACTIVE_SELECTOR SELECTOR_ANALOG_KNOB` to use a 10k rotary potentiom
 The continuous $0\text{--}1023$ analog reading is divided into 3 steps with a **35-count hysteresis window** to eliminate border jitter:
 * **0 .. 341 counts** $\rightarrow$ `NormalPulsingWarmWhite`
 * **342 .. 682 counts** $\rightarrow$ `ConcertSmoothRGBBreath`
-* **683 .. 1023 counts** $\rightarrow$ `PartyMeteorSparkle`
+* **683 .. 1023 counts** $\rightarrow$ `PartyHUEMeteorSparkle`
 
 ---
 

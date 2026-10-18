@@ -24,10 +24,14 @@
  *        Synchronized planar wave moving through the 2.36m x 0.55m rectangle.
  *        Color and wave on Edge 0 (Bottom) and Edge 2 (Top) are matched on
  *        the LEDs vis-a-vis each other across the frame.
- *   3. PartyMeteorSparkle:
- *        High-energy party mode featuring multiple meteors racing around the
- *        rectangular perimeter leaving fading trails, interspersed with random
- *        glittering sparkles.
+ *   3. PartyHUEMeteorSparkle:
+ *        High-energy party spectacle with dynamic meteors and starlight sparkles.
+ *        Cycles through three HUE background behaviors ("SmoothHUETransition",
+ *        "RawPoliceAlarmLights", and "Supernova") stepped through in random order
+ *        and random durations. Each meteor is assigned an independent stable
+ *        random color with a smooth disappearing tail, unaffected by background behavior.
+ *   4. PartyMeteorSparkle (Legacy):
+ *        Classic multi-meteor perimeter chase with fading comet tails and sparkles.
  *
  * Initial State:
  *   - Boots initially into "NormalPulsingWarmWhite".
@@ -38,7 +42,7 @@
  *        3-position ON-OFF-ON toggle switch or 3-step rotary switch.
  *        - Step 1 (Left):   Pin 11 LOW,  Pin 12 HIGH -> NormalPulsingWarmWhite
  *        - Step 2 (Center): Pin 11 HIGH, Pin 12 HIGH -> ConcertSmoothRGBBreath
- *        - Step 3 (Right):  Pin 11 HIGH, Pin 12 LOW  -> PartyMeteorSparkle
+ *        - Step 3 (Right):  Pin 11 HIGH, Pin 12 LOW  -> PartyHUEMeteorSparkle
  *     B) SELECTOR_ANALOG_KNOB:
  *        10k Potentiometer / Rotary knob wiper connected to Analog Pin A3.
  *        Divided into 3 stepped sectors with hysteresis to prevent jitter.
@@ -79,7 +83,35 @@ CRGB leds[NUM_LEDS];
 enum ModeId : uint8_t {
   MODE_NORMAL_PULSING_WARM_WHITE = 0,
   MODE_CONCERT_SMOOTH_RGB_BREATH = 1,
-  MODE_PARTY_METEOR_SPARKLE      = 2
+  MODE_PARTY_HUE_METEOR_SPARKLE  = 2,
+  MODE_PARTY_METEOR_SPARKLE      = 3
+};
+
+// HUE Background Behaviors for PartyHUEMeteorSparkle
+enum HueBehavior : uint8_t {
+  HUE_BEHAVIOR_SMOOTH_TRANSITION = 0,
+  HUE_BEHAVIOR_POLICE_ALARM      = 1,
+  HUE_BEHAVIOR_SUPERNOVA         = 2,
+  HUE_BEHAVIOR_COUNT             = 3
+};
+
+// Meteor representation with independent stable color and smooth disappearing tail
+struct PartyMeteor {
+  bool active;
+  float position;             // Continuous position along perimeter (0.0 .. NUM_LEDS - 1)
+  float speed;                // Speed in LEDs per frame
+  CRGB color;                 // Stable random color assigned at launch (unaffected by behavior)
+  uint16_t distanceTraveled;  // LED units traversed since launch
+  uint16_t maxDistance;       // Full perimeter + tail length
+  uint8_t tailLength;         // Tail length in LEDs
+};
+
+// Dynamic starlight sparkle representation
+struct PartySparkle {
+  uint16_t index;             // LED strip index (0 .. NUM_LEDS - 1)
+  uint8_t brightness;         // Current brightness (0 = inactive)
+  uint8_t decay;              // Fade step per frame
+  CRGB color;                 // Sparkle color (white or iridescent)
 };
 
 // Explicit Forward Declarations
@@ -386,17 +418,367 @@ public:
 };
 
 // ============================================================================
-// 8. State Instances & Context
+// 8. Mode 4: PartyHUEMeteorSparkle
+// High-energy party spectacle featuring dynamic meteors, starlight sparkles,
+// and three cycling background HUE behaviors ("SmoothHUETransition",
+// "RawPoliceAlarmLights", "Supernova") stepped through in random order and
+// random durations.
+//
+// Key Specifications:
+//   - Each meteor is assigned an independent, vibrant random color at spawn.
+//   - The meteor color stays strictly STABLE from start to end of its traverse.
+//   - Each meteor has a smooth disappearing tail.
+//   - Meteors are NOT affected by the background behavior (rendered via overlay
+//     blending that preserves pure meteor chrominance over any background state).
+// ============================================================================
+class PartyHUEMeteorSparkleState : public LightState {
+private:
+  unsigned long lastUpdateMillis = 0;
+  const unsigned long UPDATE_INTERVAL = 20; // 50 FPS fluid party rendering
+
+  // HUE Background Behavior State
+  HueBehavior currentBehavior;
+  unsigned long behaviorStartMillis = 0;
+  unsigned long behaviorDurationMs  = 0;
+
+  // Active Meteors (3 concurrent meteors)
+  static const uint8_t METEOR_COUNT = 3;
+  PartyMeteor meteors[METEOR_COUNT];
+
+  // Dynamic Sparkles (10 concurrent sparkle slots)
+  static const uint8_t SPARKLE_COUNT = 10;
+  PartySparkle sparkles[SPARKLE_COUNT];
+
+  void spawnMeteor(uint8_t m, bool initialScatter) {
+    meteors[m].active = true;
+    if (initialScatter) {
+      // Stagger initial meteors evenly around the perimeter
+      meteors[m].position = (float)((NUM_LEDS / METEOR_COUNT) * m);
+    } else {
+      // Spawn at a random location along the perimeter
+      meteors[m].position = (float)random16(NUM_LEDS);
+    }
+    // Random speed between 1.3 and 2.5 LEDs per update (~65 to 125 LEDs/s)
+    meteors[m].speed = 1.3f + ((float)random8(120) / 100.0f);
+    meteors[m].distanceTraveled = 0;
+    meteors[m].tailLength = 22 + random8(16); // 22 to 37 LEDs
+    meteors[m].maxDistance = NUM_LEDS + meteors[m].tailLength;
+
+    // Requirement: "Use random color for each meteor. Keep color of meteor stable from start to end"
+    // Pick an intensely vivid random saturated color (HSV full saturation & value)
+    uint8_t randomHue = random8();
+    meteors[m].color = CHSV(randomHue, 255, 255);
+  }
+
+  void selectNextBehavior(unsigned long currentMillis) {
+    // Pick randomly among the OTHER behaviors to guarantee a change
+    uint8_t offset = 1 + random8(HUE_BEHAVIOR_COUNT - 1);
+    currentBehavior = (HueBehavior)(((uint8_t)currentBehavior + offset) % HUE_BEHAVIOR_COUNT);
+    behaviorStartMillis = currentMillis;
+    // Random duration: 8 to 22 seconds
+    behaviorDurationMs = 8000UL + (unsigned long)random16(14000);
+
+    Serial.print(F("[PartyHUEMeteorSparkle] Switched to HUE Behavior: "));
+    Serial.print(getBehaviorName(currentBehavior));
+    Serial.print(F(" (Duration: "));
+    Serial.print(behaviorDurationMs / 1000);
+    Serial.println(F("s)"));
+  }
+
+  const char* getBehaviorName(HueBehavior b) const {
+    switch (b) {
+      case HUE_BEHAVIOR_SMOOTH_TRANSITION: return "SmoothHUETransition";
+      case HUE_BEHAVIOR_POLICE_ALARM:      return "RawPoliceAlarmLights";
+      case HUE_BEHAVIOR_SUPERNOVA:         return "Supernova";
+      default:                             return "Unknown";
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // HUE Behavior 1: SmoothHUETransition
+  // Atmospheric, fluid ambient rainbow gradient gliding along the rectangle.
+  // --------------------------------------------------------------------------
+  void renderSmoothHUE(unsigned long currentMillis) {
+    uint8_t cycleHue = (uint8_t)(currentMillis / 35); // 1 full rotation every ~9 seconds
+    for (uint16_t i = 0; i < NUM_LEDS; i++) {
+      uint8_t x = getLedX(i);
+      // Harmonious spatial hue shift along the 2.36m width
+      uint8_t pixelHue = cycleHue + (uint8_t)(((uint32_t)x * 128UL) / LEDS_SIDE_BOTTOM);
+      // Moderate brightness (~90) so meteors & sparkles strongly stand out
+      leds[i] = CHSV(pixelHue, 240, 90);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // HUE Behavior 2: RawPoliceAlarmLights
+  // Raw, high-energy emergency strobe bar: rapid Red/Blue alternating quad-strobes
+  // split across the left and right halves of the rectangular frame.
+  // --------------------------------------------------------------------------
+  void renderPoliceAlarm(unsigned long currentMillis) {
+    // 600 ms repeating wig-wag emergency strobe cycle
+    uint16_t cycleTime = currentMillis % 600;
+
+    bool leftFlash = false;
+    bool rightFlash = false;
+
+    // Left side (Red) quad-strobe: 0 .. 240 ms (four 30ms ON / 30ms OFF pulses)
+    if (cycleTime < 240) {
+      uint8_t sub = cycleTime % 60;
+      if (sub < 30) leftFlash = true;
+    }
+    // Right side (Blue) quad-strobe: 300 .. 540 ms (four 30ms ON / 30ms OFF pulses)
+    else if (cycleTime >= 300 && cycleTime < 540) {
+      uint8_t sub = (cycleTime - 300) % 60;
+      if (sub < 30) rightFlash = true;
+    }
+
+    const uint8_t MID_X = LEDS_SIDE_BOTTOM / 2; // 71
+
+    for (uint16_t i = 0; i < NUM_LEDS; i++) {
+      uint8_t x = getLedX(i);
+      if (x < MID_X) {
+        // Left half: Red strobe
+        if (leftFlash) {
+          leds[i] = CRGB(255, 0, 0); // Blinding red flash
+        } else {
+          leds[i] = CRGB(8, 0, 0);   // Dark red standby glow
+        }
+      } else {
+        // Right half: Blue strobe
+        if (rightFlash) {
+          leds[i] = CRGB(0, 0, 255); // Blinding blue flash
+        } else {
+          leds[i] = CRGB(0, 0, 12);  // Dark blue standby glow
+        }
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // HUE Behavior 3: Supernova
+  // Cosmic explosion sequence: gathering unstable core, dazzling stellar blast,
+  // outward-expanding shockwave, and cooling plasma nebula remnant.
+  // --------------------------------------------------------------------------
+  void renderSupernova(unsigned long currentMillis) {
+    uint32_t t = (currentMillis - behaviorStartMillis) % 4000;
+    const uint8_t MID_X = LEDS_SIDE_BOTTOM / 2; // 71
+
+    if (t < 1600) {
+      // Stage 1: Unstable Core Gathering: accelerating cosmic violet/magenta pulse
+      uint16_t pulseSpeed = 8 + (t * 24) / 1600;
+      uint8_t wave = sin8((uint8_t)((t * pulseSpeed) / 10));
+      uint8_t bright = 25 + scale8(wave, 75); // 25 .. 100
+      CRGB baseCol = CHSV(215, 240, bright);
+      fill_solid(leds, NUM_LEDS, baseCol);
+    } else if (t < 1900) {
+      // Stage 2: Stellar Detonation: dazzling white/gold blast flash
+      uint16_t dt = t - 1600; // 0 .. 300 ms
+      uint8_t flashVal = 255 - (uint8_t)((dt * 70) / 300);
+      CRGB blastCol(flashVal, flashVal, (uint8_t)(flashVal * 0.85f));
+      fill_solid(leds, NUM_LEDS, blastCol);
+    } else {
+      // Stage 3: Outward Shockwave & Expanding Nebula: 1900 .. 4000 ms
+      uint16_t dt = t - 1900; // 0 .. 2100 ms
+      uint8_t waveRadius = (uint8_t)(((uint32_t)dt * MID_X) / 1500); // reaches edges in 1500ms
+      if (waveRadius > MID_X + 5) waveRadius = MID_X + 5;
+      uint8_t globalFade = 255 - (uint8_t)(((uint32_t)dt * 200UL) / 2100); // 255 -> 55
+
+      for (uint16_t i = 0; i < NUM_LEDS; i++) {
+        uint8_t x = getLedX(i);
+        int16_t distFromCenter = abs((int16_t)x - (int16_t)MID_X);
+
+        if (abs(distFromCenter - waveRadius) <= 4) {
+          // Shockwave crest: brilliant golden white
+          leds[i] = CRGB(scale8(255, globalFade), scale8(220, globalFade), scale8(140, globalFade));
+        } else if (distFromCenter < waveRadius) {
+          // Hot expanding plasma remnant (fiery orange/magenta)
+          uint8_t remnantHue = 15 + (distFromCenter * 2);
+          uint8_t remnantVal = scale8(80, globalFade);
+          leds[i] = CHSV(remnantHue, 240, remnantVal);
+        } else {
+          // Pre-shockwave cosmic dust
+          leds[i] = CHSV(195, 255, scale8(35, globalFade));
+        }
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Dynamic Sparkles Layer
+  // Glinting starlight sparkles overlaid across the rectangular frame.
+  // --------------------------------------------------------------------------
+  void updateAndRenderSparkles() {
+    // 1. Decay and render existing active sparkles
+    for (uint8_t s = 0; s < SPARKLE_COUNT; s++) {
+      if (sparkles[s].brightness > 0) {
+        if (sparkles[s].brightness > sparkles[s].decay) {
+          sparkles[s].brightness -= sparkles[s].decay;
+        } else {
+          sparkles[s].brightness = 0;
+        }
+
+        if (sparkles[s].brightness > 0) {
+          leds[sparkles[s].index] = blend(leds[sparkles[s].index], sparkles[s].color, sparkles[s].brightness);
+        }
+      }
+    }
+
+    // 2. Randomly ignite new sparkles
+    if (random8() < 90) { // ~35% chance per frame
+      for (uint8_t s = 0; s < SPARKLE_COUNT; s++) {
+        if (sparkles[s].brightness == 0) {
+          sparkles[s].index = random16(NUM_LEDS);
+          sparkles[s].brightness = 255;
+          sparkles[s].decay = 30 + random8(35); // Lasts ~5 to 8 frames
+          sparkles[s].color = (random8() < 140) ? CRGB::White : CHSV(random8(), 160, 255);
+          break; // Spawn 1 per trigger
+        }
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Meteors Layer
+  // Multi-meteor system with independent stable colors, smooth disappearing
+  // tails, and overlay blending that keeps meteors unaffected by background behavior.
+  // --------------------------------------------------------------------------
+  void updateAndRenderMeteors() {
+    for (uint8_t m = 0; m < METEOR_COUNT; m++) {
+      if (!meteors[m].active) {
+        spawnMeteor(m, false);
+      }
+
+      // Advance position along perimeter
+      meteors[m].position += meteors[m].speed;
+      if (meteors[m].position >= (float)NUM_LEDS) {
+        meteors[m].position -= (float)NUM_LEDS;
+      }
+      meteors[m].distanceTraveled += (uint16_t)(meteors[m].speed + 0.5f);
+
+      // Check if meteor completed its journey (full perimeter + tail)
+      if (meteors[m].distanceTraveled >= meteors[m].maxDistance) {
+        // Respawn with a brand new random color for next trip
+        spawnMeteor(m, false);
+      }
+
+      int16_t headIdx = (int16_t)meteors[m].position;
+      uint8_t tailLen = meteors[m].tailLength;
+
+      // Requirement: "with a smooth disappearing tail"
+      // As distanceTraveled exceeds NUM_LEDS, tail smoothly clears off
+      if (meteors[m].distanceTraveled > NUM_LEDS) {
+        uint16_t remaining = meteors[m].maxDistance - meteors[m].distanceTraveled;
+        if (remaining < tailLen) {
+          tailLen = (uint8_t)remaining;
+        }
+      }
+
+      // Render tail from tip to head
+      for (int16_t d = (int16_t)tailLen; d >= 0; d--) {
+        int16_t pixelIdx = headIdx - d;
+        while (pixelIdx < 0) pixelIdx += NUM_LEDS;
+        while (pixelIdx >= NUM_LEDS) pixelIdx -= NUM_LEDS;
+
+        // Quadratic falloff for luminous body and long smooth disappearing tail
+        uint16_t ratio = 255 - (uint16_t)(((uint32_t)d * 255UL) / meteors[m].tailLength);
+        uint8_t alpha = scale8(ratio, ratio);
+
+        // Meteor color at distance d:
+        CRGB meteorPixel;
+        if (d == 0) {
+          // Brilliant white-hot tip
+          meteorPixel = blend(meteors[m].color, CRGB::White, 200);
+        } else if (d == 1) {
+          meteorPixel = blend(meteors[m].color, CRGB::White, 100);
+        } else {
+          // Requirement: "Keep color of meteor stable from start to end"
+          meteorPixel = meteors[m].color;
+        }
+
+        // Requirement: "Meteor not affected by behavior"
+        // Alpha blend ensures meteor's stable color overlays cleanly on background
+        leds[pixelIdx] = blend(leds[pixelIdx], meteorPixel, alpha);
+      }
+    }
+  }
+
+public:
+  ModeId getId() const override { return MODE_PARTY_HUE_METEOR_SPARKLE; }
+  const char* getName() const override { return "PartyHUEMeteorSparkle"; }
+
+  void enter(LightContext* ctx) override {
+    FastLED.setDither(0);
+    FastLED.setBrightness(220);
+    lastUpdateMillis = 0;
+
+    // Initialize meteors with initial scatter along perimeter
+    for (uint8_t m = 0; m < METEOR_COUNT; m++) {
+      spawnMeteor(m, true);
+    }
+
+    // Initialize sparkles as inactive
+    for (uint8_t s = 0; s < SPARKLE_COUNT; s++) {
+      sparkles[s].brightness = 0;
+    }
+
+    // Pick initial random HUE behavior and duration
+    currentBehavior = (HueBehavior)random8(HUE_BEHAVIOR_COUNT);
+    behaviorStartMillis = millis();
+    behaviorDurationMs  = 8000UL + (unsigned long)random16(14000);
+
+    Serial.print(F("[PartyHUEMeteorSparkle] Initialized with HUE Behavior: "));
+    Serial.println(getBehaviorName(currentBehavior));
+  }
+
+  void update(LightContext* ctx, unsigned long currentMillis) override {
+    if (currentMillis - lastUpdateMillis < UPDATE_INTERVAL) return;
+    lastUpdateMillis = currentMillis;
+
+    // 1. Step through behaviors in random order and random durations
+    if (currentMillis - behaviorStartMillis >= behaviorDurationMs) {
+      selectNextBehavior(currentMillis);
+    }
+
+    // 2. Render active HUE background behavior
+    switch (currentBehavior) {
+      case HUE_BEHAVIOR_POLICE_ALARM:
+        renderPoliceAlarm(currentMillis);
+        break;
+      case HUE_BEHAVIOR_SUPERNOVA:
+        renderSupernova(currentMillis);
+        break;
+      case HUE_BEHAVIOR_SMOOTH_TRANSITION:
+      default:
+        renderSmoothHUE(currentMillis);
+        break;
+    }
+
+    // 3. Render dynamic sparkles layer
+    updateAndRenderSparkles();
+
+    // 4. Render meteors layer (stable random color per meteor, unaffected by behavior)
+    updateAndRenderMeteors();
+
+    FastLED.show();
+  }
+};
+
+// ============================================================================
+// 9. State Instances & Context
 // ============================================================================
 LightContext                systemContext;
 NormalPulsingWarmWhiteState normalState;
 ConcertSmoothRGBBreathState concertState;
 PartyMeteorSparkleState     partyState;
+PartyHUEMeteorSparkleState  partyHueState;
 
 void applyMode(ModeId mode) {
   switch (mode) {
     case MODE_CONCERT_SMOOTH_RGB_BREATH:
       systemContext.transitionTo(&concertState);
+      break;
+    case MODE_PARTY_HUE_METEOR_SPARKLE:
+      systemContext.transitionTo(&partyHueState);
       break;
     case MODE_PARTY_METEOR_SPARKLE:
       systemContext.transitionTo(&partyState);
@@ -409,7 +791,7 @@ void applyMode(ModeId mode) {
 }
 
 // ============================================================================
-// 9. 3-Step Switch Knob Reading & Debouncing
+// 10. 3-Step Switch Knob Reading & Debouncing
 // ============================================================================
 ModeId readSelectorHardware(ModeId currentMode) {
 #if (ACTIVE_SELECTOR == SELECTOR_DIGITAL_SWITCH)
@@ -419,7 +801,7 @@ ModeId readSelectorHardware(ModeId currentMode) {
   if (valLeft == LOW) {
     return MODE_NORMAL_PULSING_WARM_WHITE; // Step 1 (Left)
   } else if (valRight == LOW) {
-    return MODE_PARTY_METEOR_SPARKLE;      // Step 3 (Right)
+    return MODE_PARTY_HUE_METEOR_SPARKLE;  // Step 3 (Right)
   } else {
     return MODE_CONCERT_SMOOTH_RGB_BREATH; // Step 2 (Center / Open)
   }
@@ -429,17 +811,17 @@ ModeId readSelectorHardware(ModeId currentMode) {
 
   // 3-step analog division with hysteresis
   if (currentMode == MODE_NORMAL_PULSING_WARM_WHITE) {
-    if (rawVal > THRESHOLD_HIGH + HYSTERESIS) return MODE_PARTY_METEOR_SPARKLE;
+    if (rawVal > THRESHOLD_HIGH + HYSTERESIS) return MODE_PARTY_HUE_METEOR_SPARKLE;
     if (rawVal > THRESHOLD_LOW + HYSTERESIS)  return MODE_CONCERT_SMOOTH_RGB_BREATH;
     return MODE_NORMAL_PULSING_WARM_WHITE;
   } else if (currentMode == MODE_CONCERT_SMOOTH_RGB_BREATH) {
     if (rawVal < THRESHOLD_LOW - HYSTERESIS)  return MODE_NORMAL_PULSING_WARM_WHITE;
-    if (rawVal > THRESHOLD_HIGH + HYSTERESIS) return MODE_PARTY_METEOR_SPARKLE;
+    if (rawVal > THRESHOLD_HIGH + HYSTERESIS) return MODE_PARTY_HUE_METEOR_SPARKLE;
     return MODE_CONCERT_SMOOTH_RGB_BREATH;
-  } else { // MODE_PARTY_METEOR_SPARKLE
+  } else { // MODE_PARTY_HUE_METEOR_SPARKLE
     if (rawVal < THRESHOLD_LOW - HYSTERESIS)  return MODE_NORMAL_PULSING_WARM_WHITE;
     if (rawVal < THRESHOLD_HIGH - HYSTERESIS) return MODE_CONCERT_SMOOTH_RGB_BREATH;
-    return MODE_PARTY_METEOR_SPARKLE;
+    return MODE_PARTY_HUE_METEOR_SPARKLE;
   }
 #endif
 }
