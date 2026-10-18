@@ -40,16 +40,11 @@
  * Initial State:
  *   - Boots initially into "NormalPulsingWarmWhite".
  *
- * Mode Selection (3-Step Switch Knob):
- *   Supports two selectable hardware configurations via ACTIVE_SELECTOR:
- *     A) SELECTOR_DIGITAL_SWITCH (Default):
- *        3-position ON-OFF-ON toggle switch or 3-step rotary switch.
- *        - Step 1 (Left):   Pin 11 LOW,  Pin 12 HIGH -> NormalPulsingWarmWhite
- *        - Step 2 (Center): Pin 11 HIGH, Pin 12 HIGH -> ConcertSmoothRGBBreath
- *        - Step 3 (Right):  Pin 11 HIGH, Pin 12 LOW  -> PartyHUEMeteorSparkle
- *     B) SELECTOR_ANALOG_KNOB:
- *        10k Potentiometer / Rotary knob wiper connected to Analog Pin A3.
- *        Divided into 3 stepped sectors with hysteresis to prevent jitter.
+ * Mode Selection (3-Step Digital Switch):
+ *   3-position ON-OFF-ON toggle switch or 3-step rotary switch:
+ *     - Step 1 (Left):   Pin 11 LOW,  Pin 12 HIGH -> NormalPulsingWarmWhite
+ *     - Step 2 (Center): Pin 11 HIGH, Pin 12 HIGH -> ConcertSmoothRGBBreath
+ *     - Step 3 (Right):  Pin 11 HIGH, Pin 12 LOW  -> PartyHUEMeteorSparkle
  *
  * Non-blocking Architecture:
  *   - Driven strictly via millis() state updates without delay().
@@ -148,14 +143,8 @@ inline uint8_t getLedX(uint16_t index) {
 }
 
 // ============================================================================
-// 3. Hardware Selector Configuration (3-Step Switch Knob)
+// 3. Hardware Selector & Potentiometer Configuration
 // ============================================================================
-#define SELECTOR_DIGITAL_SWITCH 1  // 2-Pin ON-OFF-ON toggle / 3-step rotary switch
-#define SELECTOR_ANALOG_KNOB    2  // 1-Pin potentiometer knob on analog pin with 3 steps
-
-// >>> Select active hardware input here <<<
-#define ACTIVE_SELECTOR         SELECTOR_DIGITAL_SWITCH
-
 // Digital 3-step switch pins (Internal pull-ups enabled)
 const int PIN_SWITCH_STEP1 = 11; // Left / Step 1
 const int PIN_SWITCH_STEP3 = 12; // Right / Step 3
@@ -163,12 +152,6 @@ const int PIN_SWITCH_STEP3 = 12; // Right / Step 3
 
 // Color selection potentiometer input on Analog Pin A3 (used in NormalPulsingWarmWhiteState)
 const int PIN_COLOR_POT    = A3;
-
-// Analog potentiometer knob pin & thresholds (if ACTIVE_SELECTOR == SELECTOR_ANALOG_KNOB)
-const int PIN_ANALOG_KNOB  = A3;
-const int THRESHOLD_LOW    = 341;
-const int THRESHOLD_HIGH   = 682;
-const int HYSTERESIS       = 35;
 
 // ============================================================================
 // 4. State Machine Base Class
@@ -884,10 +867,9 @@ void applyMode(ModeId mode) {
 }
 
 // ============================================================================
-// 10. 3-Step Switch Knob Reading & Debouncing
+// 10. 3-Step Digital Switch Reading & Debouncing
 // ============================================================================
 ModeId readSelectorHardware(ModeId currentMode) {
-#if (ACTIVE_SELECTOR == SELECTOR_DIGITAL_SWITCH)
   int valLeft  = digitalRead(PIN_SWITCH_STEP1);
   int valRight = digitalRead(PIN_SWITCH_STEP3);
 
@@ -898,25 +880,6 @@ ModeId readSelectorHardware(ModeId currentMode) {
   } else {
     return MODE_CONCERT_SMOOTH_RGB_BREATH; // Step 2 (Center / Open)
   }
-
-#elif (ACTIVE_SELECTOR == SELECTOR_ANALOG_KNOB)
-  int rawVal = analogRead(PIN_ANALOG_KNOB);
-
-  // 3-step analog division with hysteresis
-  if (currentMode == MODE_NORMAL_PULSING_WARM_WHITE) {
-    if (rawVal > THRESHOLD_HIGH + HYSTERESIS) return MODE_PARTY_HUE_METEOR_SPARKLE;
-    if (rawVal > THRESHOLD_LOW + HYSTERESIS)  return MODE_CONCERT_SMOOTH_RGB_BREATH;
-    return MODE_NORMAL_PULSING_WARM_WHITE;
-  } else if (currentMode == MODE_CONCERT_SMOOTH_RGB_BREATH) {
-    if (rawVal < THRESHOLD_LOW - HYSTERESIS)  return MODE_NORMAL_PULSING_WARM_WHITE;
-    if (rawVal > THRESHOLD_HIGH + HYSTERESIS) return MODE_PARTY_HUE_METEOR_SPARKLE;
-    return MODE_CONCERT_SMOOTH_RGB_BREATH;
-  } else { // MODE_PARTY_HUE_METEOR_SPARKLE
-    if (rawVal < THRESHOLD_LOW - HYSTERESIS)  return MODE_NORMAL_PULSING_WARM_WHITE;
-    if (rawVal < THRESHOLD_HIGH - HYSTERESIS) return MODE_CONCERT_SMOOTH_RGB_BREATH;
-    return MODE_PARTY_HUE_METEOR_SPARKLE;
-  }
-#endif
 }
 
 ModeId        currentModeReading = MODE_NORMAL_PULSING_WARM_WHITE;
@@ -925,16 +888,14 @@ unsigned long lastDebounceMillis = 0;
 const unsigned long DEBOUNCE_DELAY_MS = 50; // 50 ms debounce
 
 // ============================================================================
-// 10. Arduino setup() & loop()
+// 11. Arduino setup() & loop()
 // ============================================================================
 void setup() {
   Serial.begin(115200);
 
-  // Configure switch input pins
-#if (ACTIVE_SELECTOR == SELECTOR_DIGITAL_SWITCH)
+  // Configure 3-step digital switch input pins (internal pull-ups enabled)
   pinMode(PIN_SWITCH_STEP1, INPUT_PULLUP);
   pinMode(PIN_SWITCH_STEP3, INPUT_PULLUP);
-#endif
 
   // Configure color selection potentiometer input
   pinMode(PIN_COLOR_POT, INPUT);

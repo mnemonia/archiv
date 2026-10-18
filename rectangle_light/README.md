@@ -96,35 +96,20 @@ The controller implements three distinct lighting modes using an object-oriented
 
 ---
 
-## 3. Mode Selection (3-Step Switch Knob)
+## 3. Mode Selection (3-Step Digital Switch)
 
-The controller supports two selectable hardware configurations defined by `#define ACTIVE_SELECTOR` in the source code:
-
-### Configuration A: Digital 3-Step Switch (`SELECTOR_DIGITAL_SWITCH`, Default)
-Uses an **ON-OFF-ON 3-position toggle switch** or a **3-step rotary switch** wired to two digital pins with internal pull-up resistors:
+Mode selection is driven directly by a **3-position ON-OFF-ON toggle switch** or a **3-step rotary switch** wired to two digital pins with internal pull-up resistors:
 * **Pin 11 (`PIN_SWITCH_STEP1`)**: Left terminal (Step 1)
 * **Pin 12 (`PIN_SWITCH_STEP3`)**: Right terminal (Step 3)
 * **GND**: Center / Common terminal
 
 | Switch Position | Pin 11 | Pin 12 | Selected Mode | Notes |
 | :--- | :---: | :---: | :--- | :--- |
-| **Step 1 (Left)** | `LOW` | `HIGH` | **`NormalPulsingWarmWhite`** | Boot default |
+| **Step 1 (Left)** | `LOW` | `HIGH` | **`NormalPulsingWarmWhite`** | Boot default (color controlled via A3 pot) |
 | **Step 2 (Center)** | `HIGH` | `HIGH` | **`ConcertSmoothRGBBreath`** | Open / floating position |
 | **Step 3 (Right)** | `HIGH` | `LOW` | **`PartyHUEMeteorSparkle`** | Switched to GND |
 
-*Includes a 50 ms debounce filter to prevent state flapping during mechanical switching.*
-
----
-
-### Configuration B: Analog Potentiometer Knob (`SELECTOR_ANALOG_KNOB`)
-Set `#define ACTIVE_SELECTOR SELECTOR_ANALOG_KNOB` to use a 10k rotary potentiometer knob:
-* **Pin A3 (`PIN_ANALOG_KNOB`)**: Potentiometer wiper
-* **5V & GND**: Outer potentiometer terminals
-
-The continuous $0\text{--}1023$ analog reading is divided into 3 steps with a **35-count hysteresis window** to eliminate border jitter:
-* **0 .. 341 counts** $\rightarrow$ `NormalPulsingWarmWhite`
-* **342 .. 682 counts** $\rightarrow$ `ConcertSmoothRGBBreath`
-* **683 .. 1023 counts** $\rightarrow$ `PartyHUEMeteorSparkle`
+*Includes a 50 ms debounce filter (`DEBOUNCE_DELAY_MS`) to prevent state flapping during mechanical switching.*
 
 ---
 
