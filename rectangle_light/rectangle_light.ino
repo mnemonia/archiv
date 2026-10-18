@@ -1,27 +1,27 @@
 /*
  * ============================================================================
- * Rectangle Light Controller (SK6812 LED Strip along a 2.0m x 0.5m Rectangle)
+ * Rectangle Light Controller (SK6812 LED Strip along a 2.36m x 0.55m Rectangle)
  * ============================================================================
  *
  * Target: Arduino Uno / Nano / compatible (ATmega328P or higher)
  * LED Strip: SK6812 RGB (60 LEDs per meter)
  *
  * Physical Geometry & LED Calculation:
- *   - Rectangle Dimensions: Width X = 2.0 m, Height Y = 0.5 m
+ *   - Rectangle Dimensions: Width X = 2.36 m, Height Y = 0.55 m
  *   - Density: 60 LEDs / meter
- *   - Perimeter = 2 * (X + Y) = 2 * (2.0m + 0.5m) = 5.0 meters
- *   - Total Number of LEDs = 5.0 m * 60 LEDs/m = 300 LEDs
- *       * Edge 0 (Bottom, X-axis):  120 LEDs (Indices   0 .. 119)
- *       * Edge 1 (Right,  Y-axis):   30 LEDs (Indices 120 .. 149)
- *       * Edge 2 (Top,    X-axis):  120 LEDs (Indices 150 .. 269)
- *       * Edge 3 (Left,   Y-axis):   30 LEDs (Indices 270 .. 299)
+ *   - Perimeter = 2 * (X + Y) = 2 * (2.36m + 0.55m) = 5.82 meters
+ *   - Total Number of LEDs = 350 LEDs
+ *       * Edge 0 (Bottom, X-axis):  142 LEDs (Indices   0 .. 141)
+ *       * Edge 1 (Right,  Y-axis):   33 LEDs (Indices 142 .. 174)
+ *       * Edge 2 (Top,    X-axis):  142 LEDs (Indices 175 .. 316)
+ *       * Edge 3 (Left,   Y-axis):   33 LEDs (Indices 317 .. 349)
  *
  * Modes:
  *   1. NormalPulsingWarmWhite:
  *        Cozy warm-white incandescent glow (~2700K) with a gentle, meditative
  *        low-frequency sinusoidal breathing pulse across the entire frame.
  *   2. ConcertSmoothRGBBreath:
- *        Synchronized planar wave moving through the 2.0m x 0.5m rectangle.
+ *        Synchronized planar wave moving through the 2.36m x 0.55m rectangle.
  *        Color and wave on Edge 0 (Bottom) and Edge 2 (Top) are matched on
  *        the LEDs vis-a-vis each other across the frame.
  *   3. PartyMeteorSparkle:
@@ -56,17 +56,17 @@
 #define LED_PIN       6     // Data output pin for SK6812 LED strip
 
 // Rectangle physical dimensions
-#define RECT_WIDTH_M     2.0f
-#define RECT_HEIGHT_M    0.5f
+#define RECT_WIDTH_M     2.36f
+#define RECT_HEIGHT_M    0.55f
 #define LEDS_PER_METER   60
 
 // LED layout calculation
-#define LEDS_SIDE_BOTTOM (uint16_t)(RECT_WIDTH_M * LEDS_PER_METER)   // 120 LEDs
-#define LEDS_SIDE_RIGHT  (uint16_t)(RECT_HEIGHT_M * LEDS_PER_METER)  //  30 LEDs
-#define LEDS_SIDE_TOP    (uint16_t)(RECT_WIDTH_M * LEDS_PER_METER)   // 120 LEDs
-#define LEDS_SIDE_LEFT   (uint16_t)(RECT_HEIGHT_M * LEDS_PER_METER)  //  30 LEDs
+#define LEDS_SIDE_BOTTOM (uint16_t)(RECT_WIDTH_M * LEDS_PER_METER + 0.5f)   // 142 LEDs
+#define LEDS_SIDE_RIGHT  (uint16_t)(RECT_HEIGHT_M * LEDS_PER_METER + 0.5f)  //  33 LEDs
+#define LEDS_SIDE_TOP    (uint16_t)(RECT_WIDTH_M * LEDS_PER_METER + 0.5f)   // 142 LEDs
+#define LEDS_SIDE_LEFT   (uint16_t)(RECT_HEIGHT_M * LEDS_PER_METER + 0.5f)  //  33 LEDs
 
-#define NUM_LEDS         (LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP + LEDS_SIDE_LEFT) // 300 LEDs
+#define NUM_LEDS         (LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP + LEDS_SIDE_LEFT) // 350 LEDs
 
 // FastLED Framebuffer
 CRGB leds[NUM_LEDS];
@@ -88,25 +88,25 @@ void applyMode(ModeId mode);
 ModeId readSelectorHardware(ModeId currentMode);
 
 // ============================================================================
-// Geometry Helper: Map any strip index (0..299) to X-coordinate (0..119)
-// Edge 0 (Bottom): 0 .. 119 -> X = 0 .. 119
-// Edge 1 (Right): 120 .. 149 -> X = 119
-// Edge 2 (Top):   150 .. 269 -> X = 119 .. 0 (269 - i; vis-a-vis matched to Edge 0)
-// Edge 3 (Left):  270 .. 299 -> X = 0
+// Geometry Helper: Map any strip index (0..349) to X-coordinate (0..141)
+// Edge 0 (Bottom):   0 .. 141 -> X = 0 .. 141
+// Edge 1 (Right):  142 .. 174 -> X = 141
+// Edge 2 (Top):    175 .. 316 -> X = 141 .. 0 (316 - i; vis-a-vis matched to Edge 0)
+// Edge 3 (Left):   317 .. 349 -> X = 0
 // ============================================================================
 inline uint8_t getLedX(uint16_t index) {
   if (index < LEDS_SIDE_BOTTOM) {
-    // Edge 0: Bottom (Indices 0 .. 119) -> X = 0 .. 119
+    // Edge 0: Bottom (Indices 0 .. 141) -> X = 0 .. 141
     return (uint8_t)index;
   } else if (index < LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT) {
-    // Edge 1: Right (Indices 120 .. 149) -> X = 119
+    // Edge 1: Right (Indices 142 .. 174) -> X = 141
     return (uint8_t)(LEDS_SIDE_BOTTOM - 1);
   } else if (index < LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP) {
-    // Edge 2: Top (Indices 150 .. 269) -> X = 119 .. 0
-    const uint16_t topEndIndex = LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP - 1; // 269
+    // Edge 2: Top (Indices 175 .. 316) -> X = 141 .. 0
+    const uint16_t topEndIndex = LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP - 1; // 316
     return (uint8_t)(topEndIndex - index);
   } else {
-    // Edge 3: Left (Indices 270 .. 299) -> X = 0
+    // Edge 3: Left (Indices 317 .. 349) -> X = 0
     return 0;
   }
 }
@@ -231,7 +231,7 @@ public:
 
 // ============================================================================
 // 6. Mode 2: ConcertSmoothRGBBreath
-// Synchronized, slow planar wave moving gracefully through the 2.0m x 0.5m
+// Synchronized, slow planar wave moving gracefully through the 2.36m x 0.55m
 // rectangle plane. Features a 300-second (5-minute) full RGB chromatic rotation
 // with sub-hue linear blending (blend) and 16-bit sinusoidal wave interpolation
 // (sin16) for super smooth, continuous color drift and wave motion.
@@ -244,7 +244,7 @@ private:
 
   // Ultra-slow, serene timing constants
   const unsigned long COLOR_ROTATION_PERIOD_MS = 300000UL; // 300 seconds (5 min) full RGB rotation
-  const unsigned long WAVE_PERIOD_MS           = 10000UL;  // 10.0 seconds to glide across 2.0m plane
+  const unsigned long WAVE_PERIOD_MS           = 10000UL;  // 10.0 seconds to glide across 2.36m plane
   const unsigned long BREATH_PERIOD_MS         = 8000UL;   // 8.0 seconds gentle respiratory breath cycle
 
 public:
@@ -278,9 +278,9 @@ public:
     // Modulate breath smoothly between 80% and 100% (scale factor 204 .. 255)
     uint8_t breathScale = 204 + (uint8_t)(((uint32_t)breathSine16 * 51UL) >> 16);
 
-    const uint16_t topEndIndex = LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP - 1; // 269
+    const uint16_t topEndIndex = LEDS_SIDE_BOTTOM + LEDS_SIDE_RIGHT + LEDS_SIDE_TOP - 1; // 316
 
-    // 4. Render 120 positions along the 2.0m width (mirrored on Edge 0 and Edge 2)
+    // 4. Render 142 positions along the 2.36m width (mirrored on Edge 0 and Edge 2)
     for (uint16_t x = 0; x < LEDS_SIDE_BOTTOM; x++) {
       uint16_t spatialPhase16 = (uint16_t)(((uint32_t)x * 65536UL) / LEDS_SIDE_BOTTOM);
 
@@ -292,7 +292,7 @@ public:
       uint8_t localBrightness = 70 + (uint8_t)(((uint32_t)waveVal16 * 170UL) >> 16);
       uint8_t finalBrightness = scale8(localBrightness, breathScale);
 
-      // Harmonious spatial color offset across the 2.0m width (subtle 180° spread)
+      // Harmonious spatial color offset across the 2.36m width (subtle 180° spread)
       uint16_t spatialHue16 = (uint16_t)(((uint32_t)x * 32768UL) / LEDS_SIDE_BOTTOM);
       uint16_t ledHue16 = globalHue16 - spatialHue16;
 
@@ -339,7 +339,7 @@ public:
     FastLED.clear();
     FastLED.show();
 
-    // Space meteors evenly around the 300-LED rectangular perimeter
+    // Space meteors evenly around the 350-LED rectangular perimeter
     for (uint8_t m = 0; m < METEOR_COUNT; m++) {
       meteorPos[m] = (NUM_LEDS / METEOR_COUNT) * m;
     }
@@ -486,7 +486,7 @@ void setup() {
     applyMode(currentModeReading);
   }
 
-  Serial.println(F("Rectangle Light (2.0m x 0.5m, 300 LEDs) Initialized."));
+  Serial.println(F("Rectangle Light (2.36m x 0.55m, 350 LEDs) Initialized."));
 }
 
 void loop() {
