@@ -1,34 +1,34 @@
 # Rectangle Light Controller (SK6812 LED Strip)
 
-An Arduino firmware controller driving a **300-LED SK6812 RGB** strip mounted along a **2.0 m × 0.5 m rectangular frame** using the **FastLED** library. Designed with a non-blocking state machine architecture and mode selection via a 3-step switch knob.
+An Arduino firmware controller driving a **350-LED SK6812 RGB** strip mounted along a **2.36 m × 0.55 m rectangular frame** using the **FastLED** library. Designed with a non-blocking state machine architecture and mode selection via a 3-step switch knob.
 
 ---
 
 ## 1. Physical Geometry & LED Layout
 
-The LED strip runs along the perimeter of a 2.0 m × 0.5 m rectangular frame. At a density of 60 LEDs per meter, the total strip length is 5.0 meters with 300 addressable LEDs:
+The LED strip runs along the perimeter of a 2.36 m × 0.55 m rectangular frame. At a density of 60 LEDs per meter, the total strip perimeter is 5.82 meters with 350 addressable LEDs:
 
 ```text
-                  Edge 2: Top (2.0 m / 120 LEDs, Indices 150..269)
+                  Edge 2: Top (2.36 m / 142 LEDs, Indices 175..316)
        ┌─────────────────────────────────────────────────────────────┐
        │ < < < < < < < < < < < < < < < < < < < < < < < < < < < < < < │
 Edge 3 │                                                             │ Edge 1
 Left   │ v                                                         ^ │ Right
-(0.5m) │ v                                                         ^ │ (0.5m)
-30 LEDs│                                                             │ 30 LEDs
-(270.. │                                                             │ (120..
-  299) │ > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > │  149)
+(0.55m)│ v                                                         ^ │ (0.55m)
+33 LEDs│                                                             │ 33 LEDs
+(317.. │                                                             │ (142..
+  349) │ > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > │  174)
        └─────────────────────────────────────────────────────────────┘
-  (Data IN)       Edge 0: Bottom (2.0 m / 120 LEDs, Indices 0..119)
+  (Data IN)       Edge 0: Bottom (2.36 m / 142 LEDs, Indices 0..141)
 ```
 
 | Edge | Axis | Length | LED Count | Pixel Indices | Direction |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Edge 0** | Bottom ($X$) | 2.0 m | 120 LEDs | `0 .. 119` | Left $\rightarrow$ Right |
-| **Edge 1** | Right ($Y$) | 0.5 m | 30 LEDs | `120 .. 149` | Bottom $\rightarrow$ Top |
-| **Edge 2** | Top ($X$) | 2.0 m | 120 LEDs | `150 .. 269` | Right $\rightarrow$ Left |
-| **Edge 3** | Left ($Y$) | 0.5 m | 30 LEDs | `270 .. 299` | Top $\rightarrow$ Bottom |
-| **Total** | **Perimeter** | **5.0 m** | **300 LEDs** | `0 .. 299` | Closed loop |
+| **Edge 0** | Bottom ($X$) | 2.36 m | 142 LEDs | `0 .. 141` | Left $\rightarrow$ Right |
+| **Edge 1** | Right ($Y$) | 0.55 m | 33 LEDs | `142 .. 174` | Bottom $\rightarrow$ Top |
+| **Edge 2** | Top ($X$) | 2.36 m | 142 LEDs | `175 .. 316` | Right $\rightarrow$ Left |
+| **Edge 3** | Left ($Y$) | 0.55 m | 33 LEDs | `317 .. 349` | Top $\rightarrow$ Bottom |
+| **Total** | **Perimeter** | **5.82 m** | **350 LEDs** | `0 .. 349` | Closed loop |
 
 ---
 
@@ -52,8 +52,8 @@ The controller implements three distinct lighting modes using an object-oriented
 * **Animation Dynamics**:
   * **Ultra-Slow 300-Second Full RGB Rotation**: The base color wheel rotates through the full $360^\circ$ spectrum over **300 seconds (5 full minutes)** (`COLOR_ROTATION_PERIOD_MS = 300000 ms`).
   * **Super Smooth 16-Bit Sub-Hue Blending**: Uses FastLED's `blend()` with 8-bit fractional interpolation between adjacent integer hues ($65,536$ continuous color micro-steps). Completely eliminates discrete color jumping, ensuring imperceptibly smooth analog-like color drift.
-  * **Planar Wave through the Rectangle**: A gentle traveling brightness wave sweeps across the $2.0\,\text{m}$ width over a leisurely **10.0-second period** using FastLED's 16-bit sinusoidal interpolation (`sin16`).
-  * **Vis-à-Vis Color & Wave Synchronization**: Edge 0 (Bottom) and Edge 2 (Top) are mirrored across the $X$-axis ($x_{\text{top}} = 269 - i$). The LED directly opposite across the frame (vis-à-vis) receives the **exact same color and wave brightness/phase** at every point along the 2.0-meter span.
+  * **Planar Wave through the Rectangle**: A gentle traveling brightness wave sweeps across the $2.36\,\text{m}$ width over a leisurely **10.0-second period** using FastLED's 16-bit sinusoidal interpolation (`sin16`).
+  * **Vis-à-Vis Color & Wave Synchronization**: Edge 0 (Bottom) and Edge 2 (Top) are mirrored across the $X$-axis ($x_{\text{top}} = 316 - i$). The LED directly opposite across the frame (vis-à-vis) receives the **exact same color and wave brightness/phase** at every point along the 2.36-meter span.
   * **Overarching Breathing Envelope**: A gentle 8.0-second respiratory wave (`BREATH_PERIOD_MS = 8000 ms`) slowly modulates overall luminosity between $80\%$ and $100\%$.
 * **Update Cadence**: 50 FPS (20 ms interval).
 
@@ -62,7 +62,7 @@ The controller implements three distinct lighting modes using an object-oriented
 ### Mode 3: `PartyMeteorSparkle`
 * **Mood & Visual Character**: High-energy, dynamic celebratory mode combining fast-moving comets and random glitter.
 * **Animation Dynamics**:
-  * **Triple Meteor Chase**: Three equidistant meteors (spaced 100 LEDs apart) race around the 300-LED perimeter.
+  * **Triple Meteor Chase**: Three equidistant meteors (spaced ~116 LEDs apart) race around the 350-LED perimeter.
   * **Comet Trails**: On each frame, previous pixel values decay exponentially using FastLED's `fadeToBlackBy(leds, NUM_LEDS, 50)`, creating smooth, trailing tails behind each meteor head.
   * **Chromatic Meteor Heads**: Meteor heads cycle hues as they travel, capped by leading white-hot tips.
   * **Random Sparkles / Glitter**: Every frame generates random starlight sparkles (alternating between intense white flashes and saturated neon points) that pop onto random LEDs and naturally decay into the background.
@@ -114,12 +114,9 @@ The continuous $0\text{--}1023$ analog reading is divided into 3 steps with a **
 | **Floating Seed** | `Analog Pin A0` | Unconnected pin used for `randomSeed(analogRead(A0))` |
 
 ### Power Supply & Injection Guidelines
-* 300 SK6812 LEDs at full white can draw up to $\approx 9\text{ A}$ at 5V DC.
-* **Firmware Safety Limit**: The controller enables FastLED's internal power manager configured for safe operation:
-  ```cpp
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, 2500); // Clamps strip power to 5V / 2.5A
-  ```
-* **Power Injection**: For best color uniformity and to prevent voltage drop over the 5-meter run, inject 5V DC power at both ends of the strip (or at diagonal corners) from an external 5V regulated power supply (rated for at least 3A–5A). Connect Arduino GND to power supply GND.
+* 350 SK6812 LEDs at full white can draw up to $\approx 10.5\text{ A}$ at 5V DC.
+* **Firmware Brightness Ceiling**: The controller configures a steady brightness ceiling (`FastLED.setBrightness(180)`) and disables temporal dithering (`FastLED.setDither(0)`) to eliminate any high-frequency flicker and power-supply hunting.
+* **Power Injection**: For best color uniformity and to prevent voltage drop over the 5.82-meter run, inject 5V DC power at both ends of the strip (or at diagonal corners) from an external 5V regulated power supply (rated for at least 4A–6A). Connect Arduino GND to power supply GND.
 
 ---
 
