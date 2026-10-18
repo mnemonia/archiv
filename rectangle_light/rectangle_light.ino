@@ -416,14 +416,13 @@ ModeId readSelectorHardware(ModeId currentMode) {
   int valLeft  = digitalRead(PIN_SWITCH_STEP1);
   int valRight = digitalRead(PIN_SWITCH_STEP3);
 
-  // if (valLeft == LOW) {
-  //   return MODE_NORMAL_PULSING_WARM_WHITE; // Step 1 (Left)
-  // } else if (valRight == LOW) {
-  //   return MODE_PARTY_METEOR_SPARKLE;      // Step 3 (Right)
-  // } else {
-  //   return MODE_CONCERT_SMOOTH_RGB_BREATH; // Step 2 (Center / Open)
-  // }
-  return MODE_CONCERT_SMOOTH_RGB_BREATH;
+  if (valLeft == LOW) {
+    return MODE_NORMAL_PULSING_WARM_WHITE; // Step 1 (Left)
+  } else if (valRight == LOW) {
+    return MODE_PARTY_METEOR_SPARKLE;      // Step 3 (Right)
+  } else {
+    return MODE_CONCERT_SMOOTH_RGB_BREATH; // Step 2 (Center / Open)
+  }
 
 #elif (ACTIVE_SELECTOR == SELECTOR_ANALOG_KNOB)
   int rawVal = analogRead(PIN_ANALOG_KNOB);
