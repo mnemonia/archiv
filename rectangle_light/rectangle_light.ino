@@ -18,8 +18,12 @@
  *
  * Modes:
  *   1. NormalPulsingWarmWhite:
- *        Cozy warm-white incandescent glow (~2700K) with a gentle, meditative
- *        low-frequency sinusoidal breathing pulse across the entire frame.
+ *        Cozy ambient light with a gentle, meditative low-frequency sinusoidal
+ *        breathing pulse across the entire frame. Includes dynamic color selection
+ *        via potentiometer on Analog Pin A3 (0° to 360° rotation):
+ *          -   0° to 180°: Full 360-degree chromatic RGB color selection.
+ *          - 180° to 270°: Curated designer tones (nice-blue, nice-red, nice-purple).
+ *          - 270° to 360°: Continuous CCT tunable white (cold-white to warm-white).
  *   2. ConcertSmoothRGBBreath:
  *        Synchronized planar wave moving through the 2.36m x 0.55m rectangle.
  *        Color and wave on Edge 0 (Bottom) and Edge 2 (Top) are matched on
@@ -157,6 +161,9 @@ const int PIN_SWITCH_STEP1 = 11; // Left / Step 1
 const int PIN_SWITCH_STEP3 = 12; // Right / Step 3
                                  // Center / Step 2 = both pins HIGH
 
+// Color selection potentiometer input on Analog Pin A3 (used in NormalPulsingWarmWhiteState)
+const int PIN_COLOR_POT    = A3;
+
 // Analog potentiometer knob pin & thresholds (if ACTIVE_SELECTOR == SELECTOR_ANALOG_KNOB)
 const int PIN_ANALOG_KNOB  = A3;
 const int THRESHOLD_LOW    = 341;
@@ -214,7 +221,11 @@ public:
 
 // ============================================================================
 // 5. Mode 1: NormalPulsingWarmWhite
-// Warm-white incandescent tone (~2700K) with a gentle sinusoidal breathing pulse
+// Ambient lighting with a gentle sinusoidal breathing pulse.
+// Incorporates an analog potentiometer on Pin A3 for continuous color selection:
+//   -   0° to 180° (ADC   0 .. 511): Full chromatic RGB rainbow spectrum
+//   - 180° to 270° (ADC 512 .. 767): Curated designer tones (nice-blue, nice-red, nice-purple)
+//   - 270° to 360° (ADC 768 .. 1023): Tunable white (cold-white to warm-white)
 // ============================================================================
 class NormalPulsingWarmWhiteState : public LightState {
 private:
@@ -222,41 +233,119 @@ private:
   const unsigned long UPDATE_INTERVAL = 25; // 40 FPS smooth breathing
   const unsigned long PULSE_PERIOD = 4500;   // 4.5 seconds full breath cycle
 
-  // Incandescent Warm-White Base Color (~2700K)
-  const uint8_t WARM_R = 255;
-  const uint8_t WARM_G = 145;
-  const uint8_t WARM_B = 35;
+  // Potentiometer reading & smoothing on Pin A3
+  int filteredPotRaw = 1023; // Boot defaults to warm-white (1023)
+  int lastPotRaw     = -1;
 
   // Gentle breathing range: sways between 40% and 85% brightness
   const float MIN_FACTOR = 0.40f;
   const float MAX_FACTOR = 0.85f;
+
+  // Stable 4-sample analog read with deadband and EMA filtering to eliminate noise/flicker
+  int readPotStable() {
+    int sum = 0;
+    for (uint8_t i = 0; i < 4; i++) {
+      sum += analogRead(PIN_COLOR_POT);
+    }
+    int raw = sum >> 2;
+
+    if (lastPotRaw < 0) {
+      lastPotRaw = raw;
+      filteredPotRaw = raw;
+    } else {
+      // 2-count deadband to absorb standard electrical noise
+      if (abs(raw - lastPotRaw) > 2) {
+        lastPotRaw = raw;
+      }
+      // Smooth exponential filter (EMA)
+      filteredPotRaw = (filteredPotRaw * 3 + lastPotRaw) / 4;
+    }
+    return filteredPotRaw;
+  }
+
+  // Calculate base color from potentiometer rotation angle (0° to 360°)
+  CRGB calculatePotColor(int rawAdc) {
+    // ------------------------------------------------------------------------
+    // Zone 1: 0° to 180° (ADC 0 .. 511) -> Full RGB Color Selection
+    // 16-bit hue interpolation across full 360° rainbow with sub-step blending
+    // ------------------------------------------------------------------------
+    if (rawAdc <= 511) {
+      uint16_t hue16 = (uint16_t)(((uint32_t)rawAdc * 65535UL) / 511UL);
+      uint8_t h1 = (uint8_t)(hue16 >> 8);
+      uint8_t frac = (uint8_t)(hue16 & 0xFF);
+      CRGB c1, c2;
+      hsv2rgb_rainbow(CHSV(h1, 255, 255), c1);
+      hsv2rgb_rainbow(CHSV((uint8_t)(h1 + 1), 255, 255), c2);
+      return blend(c1, c2, frac);
+    }
+    // ------------------------------------------------------------------------
+    // Zone 2: 180° to 270° (ADC 512 .. 767) -> nice-blue, nice-red, nice-purple
+    // Continuous blend through curated luxury tones
+    // ------------------------------------------------------------------------
+    else if (rawAdc <= 767) {
+      const CRGB NICE_BLUE(10, 95, 255);    // Luminous royal sapphire blue
+      const CRGB NICE_RED(255, 20, 30);     // Warm vibrant ruby red
+      const CRGB NICE_PURPLE(175, 25, 240); // Deep royal amethyst purple
+
+      int offset = rawAdc - 512; // 0 .. 255
+      // 180° to 225° (ADC 512 .. 639): nice-blue to nice-red
+      if (offset < 128) {
+        uint8_t frac = (uint8_t)(((uint16_t)offset * 255U) / 127U);
+        return blend(NICE_BLUE, NICE_RED, frac);
+      }
+      // 225° to 270° (ADC 640 .. 767): nice-red to nice-purple
+      else {
+        uint8_t frac = (uint8_t)(((uint16_t)(offset - 128) * 255U) / 127U);
+        return blend(NICE_RED, NICE_PURPLE, frac);
+      }
+    }
+    // ------------------------------------------------------------------------
+    // Zone 3: 270° to 360° (ADC 768 .. 1023) -> cold-white to warm-white
+    // Continuous CCT correlated color temperature transition
+    // ------------------------------------------------------------------------
+    else {
+      const CRGB COLD_WHITE(225, 240, 255); // Crisp daylight cold white (~6500K)
+      const CRGB WARM_WHITE(255, 145, 35);  // Cozy incandescent warm white (~2700K)
+
+      int offset = rawAdc - 768; // 0 .. 255
+      uint8_t frac = (uint8_t)offset;
+      return blend(COLD_WHITE, WARM_WHITE, frac);
+    }
+  }
 
 public:
   ModeId getId() const override { return MODE_NORMAL_PULSING_WARM_WHITE; }
   const char* getName() const override { return "NormalPulsingWarmWhite"; }
 
   void enter(LightContext* ctx) override {
-    FastLED.setBrightness(255);
+    FastLED.setDither(0);
+    FastLED.setBrightness(180);
     lastUpdateMillis = 0;
+    lastPotRaw = -1; // Reset to immediately read current physical potentiometer position
   }
 
   void update(LightContext* ctx, unsigned long currentMillis) override {
     if (currentMillis - lastUpdateMillis < UPDATE_INTERVAL) return;
     lastUpdateMillis = currentMillis;
 
-    // Smooth low-frequency sine wave modulation (0.0 to 1.0)
+    // 1. Read potentiometer on A3 with anti-flicker smoothing and calculate base color
+    int potVal = readPotStable();
+    CRGB baseColor = calculatePotColor(potVal);
+
+    // 2. Smooth low-frequency sine wave modulation (0.0 to 1.0)
     float phase = (float)(currentMillis % PULSE_PERIOD) / (float)PULSE_PERIOD;
     float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
 
-    // Scale smoothly within breathing bounds
+    // 3. Scale smoothly within breathing bounds (MIN_FACTOR to MAX_FACTOR)
     float factor = MIN_FACTOR + wave * (MAX_FACTOR - MIN_FACTOR);
 
-    uint8_t r = (uint8_t)(WARM_R * factor);
-    uint8_t g = (uint8_t)(WARM_G * factor);
-    uint8_t b = (uint8_t)(WARM_B * factor);
-    CRGB warmColor(r, g, b);
+    CRGB pulseColor(
+      (uint8_t)(baseColor.r * factor),
+      (uint8_t)(baseColor.g * factor),
+      (uint8_t)(baseColor.b * factor)
+    );
 
-    fill_solid(leds, NUM_LEDS, warmColor);
+    fill_solid(leds, NUM_LEDS, pulseColor);
     FastLED.show();
   }
 };
@@ -846,6 +935,9 @@ void setup() {
   pinMode(PIN_SWITCH_STEP1, INPUT_PULLUP);
   pinMode(PIN_SWITCH_STEP3, INPUT_PULLUP);
 #endif
+
+  // Configure color selection potentiometer input
+  pinMode(PIN_COLOR_POT, INPUT);
 
   // Initialize random seed using floating analog line
   randomSeed(analogRead(A0));

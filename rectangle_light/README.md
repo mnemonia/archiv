@@ -37,10 +37,22 @@ Left   │ v                                                         ^ │ Right
 The controller implements three distinct lighting modes using an object-oriented state pattern. All animations run non-blockingly using `millis()` intervals.
 
 ### Mode 1: `NormalPulsingWarmWhite` *(Default / Boot Mode)*
-* **Mood & Visual Character**: Cozy, warm architectural mood light suitable for everyday relaxation or reading.
-* **Color Temperature**: Incandescent warm-white spectrum ($\sim 2700\text{K}$, $R=255, G=145, B=35$) that mimics the soft glow of classic tungsten filament lamps.
+* **Mood & Visual Character**: Cozy architectural mood light with a gentle sinusoidal breathing pulse across the entire frame.
+* **Potentiometer Color Selection (Pin A3)**:
+  An analog potentiometer knob on **Analog Pin A3** allows real-time continuous color selection across three dedicated rotation zones ($0^\circ\text{--}360^\circ$):
+  * **$0^\circ\text{ to }180^\circ$ (ADC $0\text{--}511$) — Full RGB Color Selection**:
+    Smooth continuous 360-degree rainbow spectrum with 16-bit sub-hue interpolation. Sweeps seamlessly from Red through Orange, Yellow, Green, Cyan, Blue, Magenta, and back to Red.
+  * **$180^\circ\text{ to }270^\circ$ (ADC $512\text{--}767$) — Designer Curated Tones**:
+    Continuous blend through three tuned ambient tones:
+    * At $180^\circ$: **`nice-blue`** (rich luminous sapphire blue, `CRGB(10, 95, 255)`)
+    * At $225^\circ$: **`nice-red`** (warm vibrant ruby red, `CRGB(255, 20, 30)`)
+    * At $270^\circ$: **`nice-purple`** (deep royal amethyst purple, `CRGB(175, 25, 240)`)
+  * **$270^\circ\text{ to }360^\circ$ (ADC $768\text{--}1023$) — Tunable White (Cold-White to Warm-White)**:
+    Continuous Correlated Color Temperature (CCT) tuning from crisp daylight cold-white ($\sim 6500\text{K}$, `CRGB(225, 240, 255)`) through neutral white ($\sim 4000\text{K}$) to cozy incandescent tungsten warm-white ($\sim 2700\text{K}$, `CRGB(255, 145, 35)`). Full clockwise ($360^\circ$) restores the original warm white.
+* **Anti-Flicker Hardware Filtering**:
+  4-sample oversampling with deadband and Exponential Moving Average (EMA) filtering eliminates ADC noise and prevents micro-flicker while breathing.
 * **Animation Dynamics**:
-  * Employs a low-frequency sinusoidal breathing wave ($\sin$) across the entire frame.
+  * Employs a low-frequency sinusoidal breathing wave ($\sin$) across the selected color.
   * Brightness gently sways between **40%** (minimum factor 0.40) and **85%** (maximum factor 0.85).
   * A full breath cycle takes **4.5 seconds** (`PULSE_PERIOD = 4500 ms`), providing a calming, organic rhythm without harsh flicker.
 * **Update Cadence**: 40 FPS (25 ms interval).
@@ -124,7 +136,7 @@ The continuous $0\text{--}1023$ analog reading is divided into 3 steps with a **
 | **LED Data (DIN)** | `Digital Pin 6` | Output to SK6812 DIN (via a 330–470 $\Omega$ series resistor) |
 | **Switch Step 1** | `Digital Pin 11` | Left switch terminal (`INPUT_PULLUP`) |
 | **Switch Step 3** | `Digital Pin 12` | Right switch terminal (`INPUT_PULLUP`) |
-| **Analog Knob** | `Analog Pin A3` | Optional potentiometer wiper input |
+| **Color Potentiometer** | `Analog Pin A3` | 10k Potentiometer wiper for color selection in `NormalPulsingWarmWhite` |
 | **Floating Seed** | `Analog Pin A0` | Unconnected pin used for `randomSeed(analogRead(A0))` |
 
 ### Power Supply & Injection Guidelines
