@@ -630,7 +630,11 @@ private:
           sparkles[s].index = random16(NUM_LEDS);
           sparkles[s].brightness = 255;
           sparkles[s].decay = 30 + random8(35); // Lasts ~5 to 8 frames
-          sparkles[s].color = (random8() < 140) ? CRGB::White : CHSV(random8(), 160, 255);
+          if (random8() < 140) {
+            sparkles[s].color = CRGB::White;
+          } else {
+            sparkles[s].color = CHSV(random8(), 160, 255);
+          }
           break; // Spawn 1 per trigger
         }
       }
