@@ -27,9 +27,10 @@
  *       4. "Meteor Deflector" (High-Speed Comet Rally)
  *       5. "Cylon Clash" (Hyper-Pong Beam Duel)
  *       6. "Territory Paint" (Rapid Wipe Wars)
- *   - Ambient Illumination Guard:
- *       Enforces that average strip luminosity NEVER drops below 35% threshold,
- *       guaranteeing room / bar counter illumination even during games.
+ *   - Brightness Exclusivity:
+ *       Global brightness is governed EXCLUSIVELY by the Rotary Brightness Knob (A2).
+ *       The Rotary Color Knob (A3) maintains strictly constant perceptual brightness
+ *       across all rainbow hues and White, with zero influence on overall strip brightness.
  * 
  * Hardware Wiring:
  *   - Rotary Color Knob:      Pin A3 <--> Potentiometer Wiper (Outer pins to 5V and GND)
@@ -128,9 +129,10 @@ public:
 
   void setBrightness(uint8_t b) {
     globalBrightness = b;
-#if (STRIP_BACKEND == BACKEND_ADAFRUIT_REAL)
-    realStrip.setBrightness(b);
-#endif
+    // We intentionally do not call realStrip.setBrightness(b).
+    // Adafruit_NeoPixel::setBrightness() performs destructive in-place integer scaling
+    // on RAM buffers and overflows when b=255, shifting color hues.
+    // Instead, show() scales RGB values cleanly with full precision below!
   }
 
   uint8_t getBrightness() const {
@@ -176,8 +178,6 @@ public:
   }
 
   void show() {
-    enforceIlluminationThreshold();
-
 #if (STRIP_BACKEND == BACKEND_VIRTUAL_SERIAL)
     // Implementation A: Transmit 185-byte binary frame to Linux Visualizer
     uint8_t header[4] = { 0xAA, 0x55, 0x01, NUM_LEDS };
@@ -196,9 +196,18 @@ public:
 
 #elif (STRIP_BACKEND == BACKEND_ADAFRUIT_REAL)
     // Implementation B: Direct Hardware Output via Adafruit_NeoPixel Library
+    // Scales buffer RGB values losslessly preserving exact color ratios
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
       uint16_t idx = i * 3;
-      realStrip.setPixelColor(i, buffer[idx], buffer[idx + 1], buffer[idx + 2]);
+      uint8_t r = buffer[idx];
+      uint8_t g = buffer[idx + 1];
+      uint8_t b = buffer[idx + 2];
+      if (globalBrightness < 255) {
+        r = (uint8_t)(((uint16_t)r * globalBrightness) >> 8);
+        g = (uint8_t)(((uint16_t)g * globalBrightness) >> 8);
+        b = (uint8_t)(((uint16_t)b * globalBrightness) >> 8);
+      }
+      realStrip.setPixelColor(i, r, g, b);
     }
     realStrip.show();
 #endif
@@ -206,6 +215,41 @@ public:
 
   static uint32_t Color(uint8_t r, uint8_t g, uint8_t b) {
     return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+  }
+
+  // Constant Perceptual Brightness Color Wheel
+  // Normalizes RMS perceptual brightness (P = sqrt(0.299*R^2 + 0.587*G^2 + 0.114*B^2))
+  // to a uniform P ≈ 85.8 across all 360° of rainbow hues, ensuring RotaryColorKnob
+  // has zero influence on the overall brightness of the strip.
+  static uint32_t ColorConstantBrightness(uint16_t hue) {
+    uint8_t sector = (hue / 10922) % 6;
+    uint16_t frac = hue % 10922;
+
+    uint8_t p = 0;
+    uint8_t q = (uint8_t)(((uint32_t)255 * (10922 - frac)) / 10922);
+    uint8_t t = (uint8_t)(((uint32_t)255 * frac) / 10922);
+    uint8_t v = 255;
+
+    uint8_t r, g, b;
+    switch (sector) {
+      case 0: r = v; g = t; b = p; break;
+      case 1: r = q; g = v; b = p; break;
+      case 2: r = p; g = v; b = t; break;
+      case 3: r = p; g = q; b = v; break;
+      case 4: r = t; g = p; b = v; break;
+      default: r = v; g = p; b = q; break;
+    }
+
+    float pBright = sqrt(0.299f * (float)r * (float)r +
+                         0.587f * (float)g * (float)g +
+                         0.114f * (float)b * (float)b);
+    if (pBright > 0.001f) {
+      float scale = 85.8f / pBright;
+      r = (uint8_t)min(255, (int)((float)r * scale + 0.5f));
+      g = (uint8_t)min(255, (int)((float)g * scale + 0.5f));
+      b = (uint8_t)min(255, (int)((float)b * scale + 0.5f));
+    }
+    return Color(r, g, b);
   }
 
   static uint32_t ColorHSV(uint16_t hue, uint8_t sat = 255, uint8_t val = 255) {
@@ -255,7 +299,26 @@ public:
 NeoPixelDriver strip;
 
 // ============================================================================
-// 4. Global Rotary Knob Controller (Rainbow Palette Mood / Base-Color with White)
+// 4. Stable Analog Input & Knob Tracking
+// ============================================================================
+// Discards first conversion after ADC MUX channel switch to pre-charge the internal
+// sample-and-hold capacitor, eliminating crosstalk/ghosting between adjacent analog pins.
+static int readAnalogStable(uint8_t pin) {
+  analogRead(pin);        // Select MUX channel and discard first reading
+  delayMicroseconds(35);  // Allow sample-and-hold capacitor to settle
+  int val1 = analogRead(pin);
+  delayMicroseconds(20);
+  int val2 = analogRead(pin);
+  return (val1 + val2) >> 1; // 2-sample average filters high-frequency noise
+}
+
+// Timestamp of last active adjustment of RotaryBrightnessKnob
+// When brightness is adjusted, LED current load changes and small supply rail dips occur.
+// RotaryColorKnob uses this to lock against any false-triggering during brightness adjustment.
+unsigned long lastBrightnessTurnTime = 0;
+
+// ============================================================================
+// Global Rotary Knob Controller (Rainbow Palette Mood / Base-Color with White)
 // ============================================================================
 class RotaryColorKnob {
 private:
@@ -285,14 +348,14 @@ private:
 
     if (isWhiteMode) {
       currentHue = 0;
-      currentR = 255;
-      currentG = 255;
-      currentB = 255;
+      currentR = 86;
+      currentG = 86;
+      currentB = 86;
     } else {
       // Keep full range of rainbow (0..65535 hue) across entire dial (0..1010 counts)
       int clampedRaw = min(1010, max(0, raw));
       currentHue = (uint16_t)(((uint32_t)clampedRaw * 65535UL) / 1010UL);
-      uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
+      uint32_t rgb = NeoPixelDriver::ColorConstantBrightness(currentHue);
       currentR = (uint8_t)(rgb >> 16);
       currentG = (uint8_t)(rgb >> 8);
       currentB = (uint8_t)rgb;
@@ -301,7 +364,7 @@ private:
 
 public:
   RotaryColorKnob(uint8_t p)
-    : pin(p), lastRaw(-1), currentHue(0), currentR(255), currentG(0), currentB(0),
+    : pin(p), lastRaw(-1), currentHue(0), currentR(157), currentG(0), currentB(0),
       isWhiteMode(false), lastReadTime(0), virtualOverride(false), potAnchorRaw(-1) {}
 
   void begin() {
@@ -314,14 +377,14 @@ public:
     if (!force && now - lastReadTime < 35) return; // 35ms update
     lastReadTime = now;
 
-    int raw = analogRead(pin);
+    int raw = readAnalogStable(pin);
 
     if (virtualOverride) {
       // Soft Takeover: Virtual control (web app/serial) is currently active.
       // Ignore normal ADC noise and floating pin jitter.
       // Only release virtual override if physical potentiometer is turned
-      // by more than 16 counts (~1.5% of knob travel).
-      if (potAnchorRaw >= 0 && abs(raw - potAnchorRaw) > 16) {
+      // by more than 20 counts (~2% of knob travel).
+      if (potAnchorRaw >= 0 && abs(raw - potAnchorRaw) > 20) {
         virtualOverride = false;
         lastRaw = raw;
         applyRaw(raw);
@@ -329,8 +392,14 @@ public:
       return;
     }
 
+    // Dynamic hysteresis deadband:
+    // If the brightness knob was adjusted recently (< 400ms ago),
+    // require a deliberate physical turn (> 24 ADC counts / ~2.3% travel) to change color.
+    // In idle state, require 8 counts (~0.8% travel) to absorb standard electrical noise.
+    int deadband = (now - lastBrightnessTurnTime < 400) ? 24 : 8;
+
     // Normal hardware potentiometer tracking
-    if (force || lastRaw < 0 || abs(raw - lastRaw) > 4) {
+    if (force || lastRaw < 0 || abs(raw - lastRaw) > deadband) {
       lastRaw = raw;
       applyRaw(raw);
     }
@@ -348,22 +417,22 @@ public:
   void setWhite() {
     isWhiteMode = true;
     currentHue = 0;
-    currentR = 255;
-    currentG = 255;
-    currentB = 255;
+    currentR = 86;
+    currentG = 86;
+    currentB = 86;
     virtualOverride = true;
-    potAnchorRaw = analogRead(pin);
+    potAnchorRaw = readAnalogStable(pin);
   }
 
   void setHue(uint16_t hue) {
     isWhiteMode = false;
     currentHue = hue;
-    uint32_t rgb = NeoPixelDriver::ColorHSV(currentHue, 255, 255);
+    uint32_t rgb = NeoPixelDriver::ColorConstantBrightness(currentHue);
     currentR = (uint8_t)(rgb >> 16);
     currentG = (uint8_t)(rgb >> 8);
     currentB = (uint8_t)rgb;
     virtualOverride = true;
-    potAnchorRaw = analogRead(pin);
+    potAnchorRaw = readAnalogStable(pin);
   }
 
   void stepHue(int16_t delta) {
@@ -385,7 +454,7 @@ public:
 };
 
 RotaryColorKnob rotaryKnob(PIN_COLOR_KNOB);
-uint32_t global_color = NeoPixelDriver::Color(255, 0, 0);
+uint32_t global_color = NeoPixelDriver::Color(157, 0, 0);
 
 // ============================================================================
 // 5. Global Rotary Brightness Knob Controller
@@ -401,7 +470,11 @@ private:
 
   void applyRaw(int raw) {
     // Map 0..1023 smoothly to full 0..255 brightness
-    currentBrightness = (uint8_t)(((uint32_t)raw * 255UL) / 1023UL);
+    uint8_t newB = (uint8_t)(((uint32_t)raw * 255UL) / 1023UL);
+    if (newB != currentBrightness) {
+      currentBrightness = newB;
+      lastBrightnessTurnTime = millis();
+    }
   }
 
 public:
@@ -419,14 +492,14 @@ public:
     if (!force && now - lastReadTime < 35) return; // 35ms update
     lastReadTime = now;
 
-    int raw = analogRead(pin);
+    int raw = readAnalogStable(pin);
 
     if (virtualOverride) {
       // Soft Takeover: Virtual control (web app/serial) is currently active.
       // Ignore normal ADC noise and floating pin jitter.
       // Only release virtual override if physical potentiometer is turned
-      // by more than 16 counts (~1.5% of knob travel).
-      if (potAnchorRaw >= 0 && abs(raw - potAnchorRaw) > 16) {
+      // by more than 20 counts (~2% of knob travel).
+      if (potAnchorRaw >= 0 && abs(raw - potAnchorRaw) > 20) {
         virtualOverride = false;
         lastRaw = raw;
         applyRaw(raw);
@@ -435,7 +508,7 @@ public:
     }
 
     // Normal hardware potentiometer tracking
-    if (force || lastRaw < 0 || abs(raw - lastRaw) > 4) {
+    if (force || lastRaw < 0 || abs(raw - lastRaw) > 6) {
       lastRaw = raw;
       applyRaw(raw);
     }
@@ -445,8 +518,9 @@ public:
 
   void setBrightness(uint8_t b) {
     currentBrightness = b;
+    lastBrightnessTurnTime = millis();
     virtualOverride = true;
-    potAnchorRaw = analogRead(pin);
+    potAnchorRaw = readAnalogStable(pin);
   }
 
   void stepBrightness(int16_t delta = 25) {
@@ -1167,16 +1241,16 @@ public:
       uint32_t wipeCol;
       if (rotaryKnob.isWhite()) {
         const uint32_t whiteTints[4] = {
-          NeoPixelDriver::Color(255, 255, 255), // Pure Crisp White
-          NeoPixelDriver::Color(255, 220, 170), // Warm Candle White
-          NeoPixelDriver::Color(215, 235, 255), // Cool Daylight White
-          NeoPixelDriver::Color(255, 245, 215)  // Soft Neutral White
+          NeoPixelDriver::Color(86, 86, 86), // Pure Crisp White (P=86)
+          NeoPixelDriver::Color(96, 83, 64), // Warm Candle White (P=86)
+          NeoPixelDriver::Color(78, 86, 96), // Cool Daylight White (P=86)
+          NeoPixelDriver::Color(90, 87, 76)  // Soft Neutral White (P=86)
         };
         wipeCol = whiteTints[paletteIdx % 4];
       } else {
         uint16_t baseHue = rotaryKnob.getHue();
         uint16_t wipeHue = baseHue + (paletteIdx * 10922);
-        wipeCol = NeoPixelDriver::ColorHSV(wipeHue, 255, 255);
+        wipeCol = NeoPixelDriver::ColorConstantBrightness(wipeHue);
       }
 
       strip.setPixelColor(wipeIdx, wipeCol);
