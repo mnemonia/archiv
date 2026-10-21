@@ -30,10 +30,27 @@
  *         * Zone 3 (512.. 682): Mode 4 - "Comet / Meteor" (Gentle Gliding Shooting Star)
  *         * Zone 4 (683.. 852): Mode 5 - "Scanner / Cylon" (6.0s Smooth Larson Eye)
  *         * Zone 5 (853..1023): Mode 6 - "Color Wipe" (Progressive Chromatic Roll)
- *   - Player 1 Button (Digital Pin 2, active LOW with INPUT_PULLUP)
- *   - Player 2 Button (Digital Pin 4, active LOW with INPUT_PULLUP)
- *   - Game Mode Launch / Toggle:
- *       * Hold P1 + P2 buttons simultaneously for 800 ms (or send serial 'g').
+ *   - Player A Button (Digital Pin 2, active LOW with INPUT_PULLUP)
+ *   - Player B Button (Digital Pin 4, active LOW with INPUT_PULLUP)
+ * 
+ * GamerHandler Architecture:
+ *   - Dedicated GamerHandler class encapsulates gamer identities (Player A, Player B, RobotGamer),
+ *     side assignments (Side A / Side B), button debouncing, round win reporting, and live scorekeeping.
+ *   - Used across all 6 arcade games, decoupling game physics from raw hardware pins and player roles.
+ * 
+ * Game-Start Behavior & Challenge Protocol:
+ *   - In ambient mode, Player A (or B) presses their button to issue a game challenge.
+ *   - The Challenger's single SK6812 LED at their end of the strip turns solid in their defined color.
+ *   - The Challenged Player's single SK6812 LED at the opposite end blinks (up to 10 times, 250ms ON / 250ms OFF).
+ *   - If the second player presses their button during the 10 blinks, the 2-player human match starts immediately!
+ *   - If no human player accepts within 10 blinks, the game automatically starts against an autonomous NPC: RobotGamer!
+ * 
+ * Point Counter & Strip End Point Indicators:
+ *   - For each point scored, the next LED moving inward from that player's end illuminates in their defined color:
+ *       * Player A: Electric Cyan (LED 0 inward)
+ *       * Player B: Neon Coral Red (LED NUM_LEDS - 1 inward)
+ *       * RobotGamer: Neon Gold / Amber (Robot's end inward)
+ *   - First player to reach MATCH_WIN_SCORE (5 points) triggers a celebratory victory light show across the strip.
  * 
  * Hardware Pin Summary:
  *   - Pin A1: Rotary Game Selection Potentiometer
@@ -41,13 +58,18 @@
  *   - Pin A3: Rotary Mood / Base-Color Potentiometer
  *   - Pin A4: Rotary Global Light Behavior Potentiometer
  *   - Pin A0: Unconnected / floating pin for randomSeed()
- *   - Pin 2:  Player 1 Push Button (GND)
- *   - Pin 4:  Player 2 Push Button (GND)
+ *   - Pin 2:  Player A Push Button (GND)
+ *   - Pin 3:  Dedicated LED for Gamer A (single SK6812 RGB LED next to Button A)
+ *   - Pin 4:  Player B Push Button (GND)
+ *   - Pin 5:  Dedicated LED for Gamer B (single SK6812 RGB LED next to Button B)
  *   - Pin 6:  SK6812 LED Strip Data IN (via 330-470 Ohm resistor)
  * ============================================================================
  */
 
 #include <FastLED.h>
+
+// Forward declaration of score & challenge overlay hook called inside FastLEDDriver::show()
+void renderScoreOverlay();
 
 // ============================================================================
 // 1. Strip Geometry & Hardware Pin Configuration
@@ -64,8 +86,10 @@
 #define PIN_LIGHT_BEHAVIOR_KNOB  A4     // Rotary knob wiper for ambient light behavior selection
 #define PIN_ENTROPY              A0     // Floating analog pin for randomSeed()
 
-#define PIN_BTN_P1               2      // Player 1 input button (active LOW)
-#define PIN_BTN_P2               4      // Player 2 input button (active LOW)
+#define PIN_BTN_P1               2      // Player A input button (active LOW, momentary to GND)
+#define PIN_LED_GAMER_A          3      // Dedicated SK6812 LED for Gamer A (next to Player A button)
+#define PIN_BTN_P2               4      // Player B input button (active LOW, momentary to GND)
+#define PIN_LED_GAMER_B          5      // Dedicated SK6812 LED for Gamer B (next to Player B button)
 
 #define SERIAL_BAUD              115200
 
@@ -78,10 +102,15 @@
 // 2. FastLED Strip Buffer & Driver Class
 // ============================================================================
 CRGB leds[NUM_LEDS];
+CRGB ledGamerA[1]; // Single dedicated SK6812 LED for Gamer A on Pin 3
+CRGB ledGamerB[1]; // Single dedicated SK6812 LED for Gamer B on Pin 5
 
 class FastLEDDriver {
 public:
   void begin() {
+    // Register dedicated Gamer LEDs and main 12m strip
+    FastLED.addLeds<SK6812, PIN_LED_GAMER_A, GRB>(ledGamerA, 1);
+    FastLED.addLeds<SK6812, PIN_LED_GAMER_B, GRB>(ledGamerB, 1);
     FastLED.addLeds<SK6812, LED_PIN, GRB>(leds, NUM_LEDS);
     FastLED.setDither(0); // Disable temporal dithering to eliminate PWM shimmer
     clear();
@@ -116,6 +145,8 @@ public:
 
   void clear() {
     FastLED.clear();
+    ledGamerA[0] = CRGB::Black;
+    ledGamerB[0] = CRGB::Black;
   }
 
   uint16_t numPixels() const {
@@ -123,6 +154,7 @@ public:
   }
 
   void show() {
+    renderScoreOverlay(); // Overlay challenge status & point indicators onto strip ends
 #if (STRIP_BACKEND == BACKEND_VIRTUAL_SERIAL)
     // Optional high-speed serial streaming to desktop visualizer
     uint8_t header[4] = { 0xAA, 0x55, 0x01, (uint8_t)(NUM_LEDS > 255 ? 255 : NUM_LEDS) };
@@ -601,8 +633,378 @@ public:
 Button btnP1(PIN_BTN_P1);
 Button btnP2(PIN_BTN_P2);
 
+// ============================================================================
+// System State, Gamer Identification & GamerHandler Class
+// Encapsulates player identities (Player A, Player B, Robot), sides, input & scoring
+// ============================================================================
+enum SystemState {
+  STATE_IDLE_AMBIENT,     // Ambient bar lighting mode (controlled by lightBehaviorKnob)
+  STATE_CHALLENGE,        // Player pressed button -> challenge initiated, opponent end LED blinking up to 10x
+  STATE_PLAYING,          // Active game match in progress (2 human players or human vs RobotGamer)
+  STATE_MATCH_OVER        // Match complete (a player reached MATCH_WIN_SCORE) -> victory animation
+};
+
+enum GamerId {
+  GAMER_NONE     = 0,
+  GAMER_PLAYER_A = 1,
+  GAMER_PLAYER_B = 2,
+  GAMER_ROBOT    = 3
+};
+
+enum PlayerSide {
+  SIDE_A = 0, // Left end of bar counter (LED index 0, Pin 2)
+  SIDE_B = 1  // Right end of bar counter (LED index NUM_LEDS - 1, Pin 4)
+};
+
+const char* const GAMER_NAMES[4] = {
+  "None",
+  "Player A",
+  "Player B",
+  "RobotGamer"
+};
+
+// Player & Robot Defined Colors
+const CRGB COLOR_GAMER_A     = CRGB(0, 180, 255); // Electric Cyan (Player A)
+const CRGB COLOR_GAMER_B     = CRGB(255, 30, 70);  // Neon Coral Red (Player B)
+const CRGB COLOR_GAMER_ROBOT = CRGB(255, 170, 0);  // Neon Gold / Amber (RobotGamer)
+
+const uint8_t MATCH_WIN_SCORE = 5;
+
+// ============================================================================
+// GamerHandler: Class handling which is the current player (A, B or Robot)
+// ============================================================================
+class GamerHandler {
+private:
+  Button& btnA;
+  Button& btnB;
+
+  GamerId sideAGamer; // Gamer currently assigned to Side A (Left: GAMER_PLAYER_A or GAMER_ROBOT)
+  GamerId sideBGamer; // Gamer currently assigned to Side B (Right: GAMER_PLAYER_B or GAMER_ROBOT)
+  GamerId challenger; // Gamer who initiated the challenge (GAMER_PLAYER_A or GAMER_PLAYER_B)
+
+  uint8_t scoreA;
+  uint8_t scoreB;
+  const uint8_t winScore;
+
+  bool roundOver;
+  unsigned long roundOverTime;
+  PlayerSide roundWinnerSide;
+  bool scoreTallied;
+
+  // Challenge blinking state
+  uint8_t challengeBlinkCount;
+  bool challengeBlinkState;
+  unsigned long lastChallengeBlinkTime;
+
+  // Button press visual feedback timestamps
+  unsigned long lastPressTimeA;
+  unsigned long lastPressTimeB;
+
+public:
+  GamerHandler(Button& bA, Button& bB)
+    : btnA(bA), btnB(bB),
+      sideAGamer(GAMER_PLAYER_A), sideBGamer(GAMER_PLAYER_B), challenger(GAMER_NONE),
+      scoreA(0), scoreB(0), winScore(MATCH_WIN_SCORE),
+      roundOver(false), roundOverTime(0), roundWinnerSide(SIDE_A), scoreTallied(false),
+      challengeBlinkCount(0), challengeBlinkState(false), lastChallengeBlinkTime(0),
+      lastPressTimeA(0), lastPressTimeB(0) {}
+
+  // 1. Current Player Identity Queries
+  GamerId getCurrentPlayer(PlayerSide side) const {
+    return (side == SIDE_A) ? sideAGamer : sideBGamer;
+  }
+
+  const char* getCurrentPlayerName(PlayerSide side) const {
+    return GAMER_NAMES[(uint8_t)getCurrentPlayer(side)];
+  }
+
+  bool isRobot(PlayerSide side) const {
+    return getCurrentPlayer(side) == GAMER_ROBOT;
+  }
+
+  bool isHuman(PlayerSide side) const {
+    return !isRobot(side) && getCurrentPlayer(side) != GAMER_NONE;
+  }
+
+  PlayerSide getRobotSide() const {
+    return (sideAGamer == GAMER_ROBOT) ? SIDE_A : SIDE_B;
+  }
+
+  GamerId getChallenger() const {
+    return challenger;
+  }
+
+  // 2. Defined Colors
+  CRGB getGamerColor(GamerId gamer) const {
+    switch (gamer) {
+      case GAMER_PLAYER_A: return COLOR_GAMER_A;
+      case GAMER_PLAYER_B: return COLOR_GAMER_B;
+      case GAMER_ROBOT:    return COLOR_GAMER_ROBOT;
+      default:             return CRGB::Black;
+    }
+  }
+
+  CRGB getSideColor(PlayerSide side) const {
+    return getGamerColor(getCurrentPlayer(side));
+  }
+
+  // 3. Input Abstraction
+  bool wasPressed(PlayerSide side) {
+    if (side == SIDE_A) {
+      if (btnA.wasPressed()) {
+        lastPressTimeA = millis();
+        return true;
+      }
+      return false;
+    } else {
+      if (btnB.wasPressed()) {
+        lastPressTimeB = millis();
+        return true;
+      }
+      return false;
+    }
+  }
+
+  bool isDown(PlayerSide side) const {
+    return (side == SIDE_A) ? btnA.isDown() : btnB.isDown();
+  }
+
+  void triggerVirtualPress(PlayerSide side) {
+    if (side == SIDE_A) {
+      btnA.triggerVirtualPress();
+      lastPressTimeA = millis();
+    } else {
+      btnB.triggerVirtualPress();
+      lastPressTimeB = millis();
+    }
+  }
+
+  void triggerRobotPress() {
+    triggerVirtualPress(getRobotSide());
+  }
+
+  // 4. Round Win & Scoring
+  void resetRound() {
+    roundOver = false;
+    scoreTallied = false;
+  }
+
+  void setRoundWinner(PlayerSide side, unsigned long currentMillis) {
+    roundOver = true;
+    roundWinnerSide = side;
+    roundOverTime = currentMillis;
+    scoreTallied = false;
+  }
+
+  bool isRoundOver() const { return roundOver; }
+  unsigned long getRoundOverTime() const { return roundOverTime; }
+  PlayerSide getRoundWinnerSide() const { return roundWinnerSide; }
+  GamerId getRoundWinnerGamer() const { return getCurrentPlayer(roundWinnerSide); }
+  CRGB getRoundWinnerColor() const { return getSideColor(roundWinnerSide); }
+
+  bool isScoreTallied() const { return scoreTallied; }
+  void markScoreTallied() { scoreTallied = true; }
+
+  void awardRoundPoint() {
+    if (scoreTallied) return;
+    scoreTallied = true;
+    if (roundWinnerSide == SIDE_A) scoreA++;
+    else scoreB++;
+
+    Serial.print(F("[POINT!] "));
+    Serial.print(getCurrentPlayerName(roundWinnerSide));
+    Serial.print(F(" scores! Match Score: [Side A ("));
+    Serial.print(getCurrentPlayerName(SIDE_A));
+    Serial.print(F("): "));
+    Serial.print(scoreA);
+    Serial.print(F("] - [Side B ("));
+    Serial.print(getCurrentPlayerName(SIDE_B));
+    Serial.print(F("): "));
+    Serial.print(scoreB);
+    Serial.println(F("]"));
+  }
+
+  uint8_t getScore(PlayerSide side) const {
+    return (side == SIDE_A) ? scoreA : scoreB;
+  }
+
+  bool isMatchWon() const {
+    return (scoreA >= winScore || scoreB >= winScore);
+  }
+
+  PlayerSide getMatchWinnerSide() const {
+    return (scoreA >= winScore) ? SIDE_A : SIDE_B;
+  }
+
+  GamerId getMatchWinnerGamer() const {
+    return getCurrentPlayer(getMatchWinnerSide());
+  }
+
+  CRGB getMatchWinnerColor() const {
+    return getSideColor(getMatchWinnerSide());
+  }
+
+  void resetScores() {
+    scoreA = 0;
+    scoreB = 0;
+    roundOver = false;
+    scoreTallied = false;
+  }
+
+  // 5. Challenge Management
+  void startChallenge(GamerId who) {
+    challenger = who;
+    sideAGamer = GAMER_PLAYER_A;
+    sideBGamer = GAMER_PLAYER_B;
+    challengeBlinkCount = 0;
+    challengeBlinkState = true;
+    lastChallengeBlinkTime = millis();
+    resetScores();
+  }
+
+  bool updateChallengeBlink(unsigned long currentMillis) {
+    const unsigned long BLINK_INTERVAL = 250;
+    if (currentMillis - lastChallengeBlinkTime >= BLINK_INTERVAL) {
+      lastChallengeBlinkTime = currentMillis;
+      challengeBlinkState = !challengeBlinkState;
+      if (!challengeBlinkState) {
+        challengeBlinkCount++;
+        Serial.print(F("[Challenge Blink] "));
+        Serial.print(challengeBlinkCount);
+        Serial.println(F(" / 10"));
+        if (challengeBlinkCount >= 10) {
+          return true; // 10 blinks completed without human response
+        }
+      }
+    }
+    return false;
+  }
+
+  uint8_t getChallengeBlinkCount() const { return challengeBlinkCount; }
+  bool getChallengeBlinkState() const { return challengeBlinkState; }
+
+  void startMatch(bool againstRobot) {
+    if (againstRobot) {
+      if (challenger == GAMER_PLAYER_A) {
+        sideAGamer = GAMER_PLAYER_A;
+        sideBGamer = GAMER_ROBOT;
+      } else {
+        sideAGamer = GAMER_ROBOT;
+        sideBGamer = GAMER_PLAYER_B;
+      }
+    } else {
+      sideAGamer = GAMER_PLAYER_A;
+      sideBGamer = GAMER_PLAYER_B;
+    }
+    resetScores();
+    resetRound();
+  }
+
+  // 6. Dedicated Gamer LED & Strip Overlay Rendering
+  void updateGamerLeds(CRGB& ledA, CRGB& ledB, SystemState state, unsigned long currentMillis) {
+    if (state == STATE_IDLE_AMBIENT) {
+      // Soft ambient indicator: low-brightness signature color so patrons easily spot buttons in a dim bar
+      ledA = COLOR_GAMER_A;
+      ledA.nscale8_video(70);
+      ledB = COLOR_GAMER_B;
+      ledB.nscale8_video(70);
+    } else if (state == STATE_CHALLENGE) {
+      if (challenger == GAMER_PLAYER_A) {
+        // Player A challenged: Button A solid Cyan, Button B blinking Coral Red
+        ledA = COLOR_GAMER_A;
+        ledB = challengeBlinkState ? COLOR_GAMER_B : CRGB::Black;
+      } else if (challenger == GAMER_PLAYER_B) {
+        // Player B challenged: Button B solid Coral Red, Button A blinking Cyan
+        ledB = COLOR_GAMER_B;
+        ledA = challengeBlinkState ? COLOR_GAMER_A : CRGB::Black;
+      }
+    } else if (state == STATE_PLAYING) {
+      CRGB baseA = getSideColor(SIDE_A);
+      CRGB baseB = getSideColor(SIDE_B);
+
+      if (roundOver) {
+        // Winner button LED pulses bright, loser button LED dims
+        bool pulse = ((currentMillis / 120) % 2 == 0);
+        if (roundWinnerSide == SIDE_A) {
+          ledA = pulse ? CRGB::White : baseA;
+          ledB = baseB;
+          ledB.nscale8_video(40);
+        } else {
+          ledB = pulse ? CRGB::White : baseB;
+          ledA = baseA;
+          ledA.nscale8_video(40);
+        }
+      } else {
+        // Active play: display side color, flash bright white on button press (80ms tactile confirmation)
+        if (currentMillis - lastPressTimeA < 80) {
+          ledA = CRGB(255, 255, 255);
+        } else {
+          ledA = baseA;
+        }
+
+        if (currentMillis - lastPressTimeB < 80) {
+          ledB = CRGB(255, 255, 255);
+        } else {
+          ledB = baseB;
+        }
+      }
+    } else if (state == STATE_MATCH_OVER) {
+      // Match victory celebration: Champion's button LED strobes triumphantly
+      bool strobe = ((currentMillis / 100) % 2 == 0);
+      PlayerSide winner = getMatchWinnerSide();
+      CRGB winCol = getSideColor(winner);
+      if (winner == SIDE_A) {
+        ledA = strobe ? CRGB::White : winCol;
+        ledB = CRGB::Black;
+      } else {
+        ledB = strobe ? CRGB::White : winCol;
+        ledA = CRGB::Black;
+      }
+    }
+  }
+
+  void renderScoreOverlay(CRGB* leds, uint16_t numLeds, SystemState state) {
+    if (state == STATE_PLAYING || state == STATE_MATCH_OVER) {
+      // Side A Score: illuminate next LED moving inward from index 0
+      CRGB colA = getSideColor(SIDE_A);
+      for (uint8_t i = 0; i < scoreA && i < numLeds; i++) {
+        leds[i] = colA;
+      }
+
+      // Side B Score: illuminate next LED moving inward from numLeds - 1
+      CRGB colB = getSideColor(SIDE_B);
+      for (uint8_t i = 0; i < scoreB && i < numLeds; i++) {
+        leds[numLeds - 1 - i] = colB;
+      }
+    } else if (state == STATE_CHALLENGE) {
+      if (challenger == GAMER_PLAYER_A) {
+        // Challenger A: solid on single SK6812 at LED 0
+        leds[0] = COLOR_GAMER_A;
+        // Opponent B: blinking on single SK6812 at LED numLeds - 1
+        leds[numLeds - 1] = challengeBlinkState ? COLOR_GAMER_B : CRGB::Black;
+      } else if (challenger == GAMER_PLAYER_B) {
+        // Challenger B: solid on single SK6812 at LED numLeds - 1
+        leds[numLeds - 1] = COLOR_GAMER_B;
+        // Opponent A: blinking on single SK6812 at LED 0
+        leds[0] = challengeBlinkState ? COLOR_GAMER_A : CRGB::Black;
+      }
+    }
+  }
+};
+
+GamerHandler gamerHandler(btnP1, btnP2);
+
+SystemState systemState = STATE_IDLE_AMBIENT;
 LightModeId currentLightMode = LIGHT_BREATHING_PULSE;
 bool inGameMode = false;
+unsigned long matchOverTime = 0;
+
+// Score and Challenge Overlay Hook
+// Automatically called inside FastLEDDriver::show() right before FastLED.show()
+void renderScoreOverlay() {
+  gamerHandler.renderScoreOverlay(leds, NUM_LEDS, systemState);
+  gamerHandler.updateGamerLeds(ledGamerA[0], ledGamerB[0], systemState, millis());
+}
 
 // ============================================================================
 // 9. Ambient Light Modes (Separated from Game Logic)
@@ -928,30 +1330,41 @@ public:
 // --- Game 1: "Resonance Pulse" (Rhythm Wave Tug-of-War) ---
 class ResonancePulseGame {
 private:
+  GamerHandler& gamers;
   unsigned long lastUpdate = 0;
   const unsigned long BREATH_PERIOD = 7500;
   int16_t nexusPosition;
   unsigned long p1Cooldown;
   unsigned long p2Cooldown;
-  bool roundOver;
-  unsigned long roundOverTime;
 
 public:
-  ResonancePulseGame() : nexusPosition(NUM_LEDS / 2), p1Cooldown(0), p2Cooldown(0), roundOver(false), roundOverTime(0) {}
+  ResonancePulseGame(GamerHandler& gh)
+    : gamers(gh), nexusPosition(NUM_LEDS / 2), p1Cooldown(0), p2Cooldown(0) {}
 
   void reset() {
     nexusPosition = NUM_LEDS / 2;
     p1Cooldown = 0;
     p2Cooldown = 0;
-    roundOver = false;
+    gamers.resetRound();
   }
 
   void update(unsigned long currentMillis) {
     if (currentMillis - lastUpdate < 25) return;
     lastUpdate = currentMillis;
 
-    if (roundOver) {
-      if (currentMillis - roundOverTime > 2000) reset();
+    if (gamers.isRoundOver()) {
+      if (currentMillis - gamers.getRoundOverTime() > 2000) {
+        reset();
+      } else {
+        uint8_t flash = ((currentMillis - gamers.getRoundOverTime()) / 120) % 2 == 0 ? 255 : 40;
+        CRGB winCol = gamers.getRoundWinnerColor();
+        uint16_t start = (gamers.getRoundWinnerSide() == SIDE_A) ? (NUM_LEDS - 40) : 0;
+        uint16_t end = (gamers.getRoundWinnerSide() == SIDE_A) ? NUM_LEDS : 40;
+        for (uint16_t i = start; i < end; i++) {
+          strip.setPixelColor(i, FastLEDDriver::Color(scale8(winCol.r, flash), scale8(winCol.g, flash), scale8(winCol.b, flash)));
+        }
+        strip.show();
+      }
       return;
     }
 
@@ -960,14 +1373,14 @@ public:
     bool inResonance = (wave >= 0.88f);
     int16_t pushStep = max(1, (int)(NUM_LEDS / 15));
 
-    if (btnP1.wasPressed()) {
+    // Player on Side A (Player A or Robot)
+    if (gamers.wasPressed(SIDE_A)) {
       if (currentMillis >= p1Cooldown) {
         if (inResonance) {
           nexusPosition += pushStep;
           if (nexusPosition >= (int16_t)NUM_LEDS - 2) {
-            roundOver = true;
-            roundOverTime = currentMillis;
             nexusPosition = NUM_LEDS - 1;
+            gamers.setRoundWinner(SIDE_A, currentMillis);
           }
         } else {
           p1Cooldown = currentMillis + 400; // Misfire penalty cooldown
@@ -975,14 +1388,14 @@ public:
       }
     }
 
-    if (btnP2.wasPressed()) {
+    // Player on Side B (Player B or Robot)
+    if (gamers.wasPressed(SIDE_B)) {
       if (currentMillis >= p2Cooldown) {
         if (inResonance) {
           nexusPosition -= pushStep;
           if (nexusPosition <= 1) {
-            roundOver = true;
-            roundOverTime = currentMillis;
             nexusPosition = 0;
+            gamers.setRoundWinner(SIDE_B, currentMillis);
           }
         } else {
           p2Cooldown = currentMillis + 400; // Misfire penalty cooldown
@@ -999,15 +1412,17 @@ public:
     for (uint16_t i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, baseCol);
 
     int glowWidth = max(2, (int)(NUM_LEDS * 0.13f + 0.5f));
+    CRGB colA = gamers.getSideColor(SIDE_A);
+    CRGB colB = gamers.getSideColor(SIDE_B);
     for (int i = 0; i <= nexusPosition; i++) {
       int dist = nexusPosition - i;
       uint8_t b = (dist < glowWidth) ? (255 - (dist * 210) / glowWidth) : 45;
-      strip.setPixelColor(i, FastLEDDriver::Color(15, (b * 130) >> 8, b));
+      strip.setPixelColor(i, FastLEDDriver::Color((colA.r * b) >> 8, (colA.g * b) >> 8, (colA.b * b) >> 8));
     }
     for (int i = nexusPosition; i < NUM_LEDS; i++) {
       int dist = i - nexusPosition;
       uint8_t r = (dist < glowWidth) ? (255 - (dist * 210) / glowWidth) : 45;
-      strip.setPixelColor(i, FastLEDDriver::Color(r, (r * 65) >> 8, 15));
+      strip.setPixelColor(i, FastLEDDriver::Color((colB.r * r) >> 8, (colB.g * r) >> 8, (colB.b * r) >> 8));
     }
 
     uint32_t nexusCol = inResonance ? FastLEDDriver::Color(255, 255, 240) : FastLEDDriver::Color(255, 190, 60);
@@ -1019,31 +1434,43 @@ public:
 // --- Game 2: "Sparkle Rush" (Nova Sparkle Reflex Deflector) ---
 class SparkleRushGame {
 private:
+  GamerHandler& gamers;
   unsigned long lastUpdate = 0;
   float novaPos;
   float novaSpeed;
-  bool roundOver;
-  unsigned long roundOverTime;
 
 public:
-  SparkleRushGame()
-    : novaPos((float)NUM_LEDS * 0.5f),
-      novaSpeed(max(0.25f, (float)NUM_LEDS * (0.95f / 60.0f))),
-      roundOver(false), roundOverTime(0) {}
+  SparkleRushGame(GamerHandler& gh)
+    : gamers(gh), novaPos((float)NUM_LEDS * 0.5f),
+      novaSpeed(max(0.25f, (float)NUM_LEDS * (0.95f / 60.0f))) {}
 
   void reset() {
     novaPos = (float)NUM_LEDS * 0.5f;
     float baseSpeed = max(0.25f, (float)NUM_LEDS * (0.95f / 60.0f));
     novaSpeed = (random(0, 2) == 0 ? baseSpeed : -baseSpeed);
-    roundOver = false;
+    gamers.resetRound();
   }
+
+  float getNovaPos() const { return novaPos; }
+  float getNovaSpeed() const { return novaSpeed; }
 
   void update(unsigned long currentMillis) {
     if (currentMillis - lastUpdate < 20) return;
     lastUpdate = currentMillis;
 
-    if (roundOver) {
-      if (currentMillis - roundOverTime > 2000) reset();
+    if (gamers.isRoundOver()) {
+      if (currentMillis - gamers.getRoundOverTime() > 2000) {
+        reset();
+      } else {
+        uint8_t flash = ((currentMillis - gamers.getRoundOverTime()) / 120) % 2 == 0 ? 255 : 40;
+        CRGB winCol = gamers.getRoundWinnerColor();
+        uint16_t start = (gamers.getRoundWinnerSide() == SIDE_A) ? (NUM_LEDS - 40) : 0;
+        uint16_t end = (gamers.getRoundWinnerSide() == SIDE_A) ? NUM_LEDS : 40;
+        for (uint16_t i = start; i < end; i++) {
+          strip.setPixelColor(i, FastLEDDriver::Color(scale8(winCol.r, flash), scale8(winCol.g, flash), scale8(winCol.b, flash)));
+        }
+        strip.show();
+      }
       return;
     }
 
@@ -1051,7 +1478,7 @@ public:
     uint16_t shieldLeds = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100)); // ~15%
     float maxSpeed = max(0.8f, (float)NUM_LEDS * (2.8f / 60.0f));
 
-    if (btnP1.wasPressed()) {
+    if (gamers.wasPressed(SIDE_A)) {
       if (novaPos >= 0.0f && novaPos <= (float)shieldLeds && novaSpeed < 0.0f) {
         float bonus = ((float)shieldLeds - novaPos) * (1.5f / (float)shieldLeds);
         novaSpeed = abs(novaSpeed) * 1.12f + bonus;
@@ -1059,7 +1486,7 @@ public:
       }
     }
 
-    if (btnP2.wasPressed()) {
+    if (gamers.wasPressed(SIDE_B)) {
       float p2ZoneStart = (float)(NUM_LEDS - 1 - shieldLeds);
       if (novaPos >= p2ZoneStart && novaPos <= (float)(NUM_LEDS - 1) && novaSpeed > 0.0f) {
         float bonus = (novaPos - p2ZoneStart) * (1.5f / (float)shieldLeds);
@@ -1068,9 +1495,10 @@ public:
       }
     }
 
-    if (novaPos < -1.0f || novaPos > (float)NUM_LEDS) {
-      roundOver = true;
-      roundOverTime = currentMillis;
+    if (novaPos < -1.0f) {
+      gamers.setRoundWinner(SIDE_B, currentMillis); // Nova slipped past Side A -> Side B scored!
+    } else if (novaPos > (float)NUM_LEDS) {
+      gamers.setRoundWinner(SIDE_A, currentMillis); // Nova slipped past Side B -> Side A scored!
     }
 
     // Baseline starfield floor
@@ -1081,9 +1509,11 @@ public:
       strip.setPixelColor(i, FastLEDDriver::Color((baseR * 45) >> 8, (baseG * 45) >> 8, (baseB * 45) >> 8));
     }
 
-    // Defense Shields
-    for (uint16_t i = 0; i < shieldLeds; i++) strip.setPixelColor(i, FastLEDDriver::Color(30, 110, 210));
-    for (uint16_t i = NUM_LEDS - shieldLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, FastLEDDriver::Color(210, 50, 140));
+    // Defense Shields colored by gamer on that side!
+    CRGB colA = gamers.getSideColor(SIDE_A);
+    CRGB colB = gamers.getSideColor(SIDE_B);
+    for (uint16_t i = 0; i < shieldLeds; i++) strip.setPixelColor(i, FastLEDDriver::Color((colA.r * 200) >> 8, (colA.g * 200) >> 8, (colA.b * 200) >> 8));
+    for (uint16_t i = NUM_LEDS - shieldLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, FastLEDDriver::Color((colB.r * 200) >> 8, (colB.g * 200) >> 8, (colB.b * 200) >> 8));
 
     // Nova head & halo
     int center = (int)round(novaPos);
@@ -1099,67 +1529,82 @@ public:
 // --- Game 3: "Flame Tug" (Bellows Forge Combustion Clash) ---
 class FlameTugGame {
 private:
+  GamerHandler& gamers;
   unsigned long lastUpdate = 0;
   int16_t flameClashPos;
   unsigned long lastTapP1;
   unsigned long lastTapP2;
-  bool roundOver;
-  unsigned long roundOverTime;
 
 public:
-  FlameTugGame()
-    : flameClashPos(NUM_LEDS / 2), lastTapP1(0), lastTapP2(0), roundOver(false), roundOverTime(0) {}
+  FlameTugGame(GamerHandler& gh)
+    : gamers(gh), flameClashPos(NUM_LEDS / 2), lastTapP1(0), lastTapP2(0) {}
 
   void reset() {
     flameClashPos = NUM_LEDS / 2;
-    roundOver = false;
+    gamers.resetRound();
   }
 
   void update(unsigned long currentMillis) {
     if (currentMillis - lastUpdate < 25) return;
     lastUpdate = currentMillis;
 
-    if (roundOver) {
-      if (currentMillis - roundOverTime > 2000) reset();
+    if (gamers.isRoundOver()) {
+      if (currentMillis - gamers.getRoundOverTime() > 2000) {
+        reset();
+      } else {
+        uint8_t flash = ((currentMillis - gamers.getRoundOverTime()) / 120) % 2 == 0 ? 255 : 40;
+        CRGB winCol = gamers.getRoundWinnerColor();
+        uint16_t start = (gamers.getRoundWinnerSide() == SIDE_A) ? (NUM_LEDS - 40) : 0;
+        uint16_t end = (gamers.getRoundWinnerSide() == SIDE_A) ? NUM_LEDS : 40;
+        for (uint16_t i = start; i < end; i++) {
+          strip.setPixelColor(i, FastLEDDriver::Color(scale8(winCol.r, flash), scale8(winCol.g, flash), scale8(winCol.b, flash)));
+        }
+        strip.show();
+      }
       return;
     }
 
     int16_t pushStep = max(1, (int)(NUM_LEDS / 30));
 
-    if (btnP1.wasPressed()) {
+    if (gamers.wasPressed(SIDE_A)) {
       if (currentMillis - lastTapP1 > 120) { // 120ms anti-spam window
         lastTapP1 = currentMillis;
         flameClashPos += pushStep;
         if (flameClashPos >= (int16_t)NUM_LEDS - 2) {
-          roundOver = true;
-          roundOverTime = currentMillis;
           flameClashPos = NUM_LEDS - 1;
+          gamers.setRoundWinner(SIDE_A, currentMillis);
         }
       }
     }
 
-    if (btnP2.wasPressed()) {
+    if (gamers.wasPressed(SIDE_B)) {
       if (currentMillis - lastTapP2 > 120) { // 120ms anti-spam window
         lastTapP2 = currentMillis;
         flameClashPos -= pushStep;
         if (flameClashPos <= 1) {
-          roundOver = true;
-          roundOverTime = currentMillis;
           flameClashPos = 0;
+          gamers.setRoundWinner(SIDE_B, currentMillis);
         }
       }
     }
 
-    // P1: Blue Plasma Forge (0..clash) -> gradients from deep blue to white-hot
+    CRGB colA = gamers.getSideColor(SIDE_A);
+    CRGB colB = gamers.getSideColor(SIDE_B);
+
+    // Side A Forge (0..clash) -> gradients from gamer A color to white-hot
     for (int i = 0; i <= flameClashPos; i++) {
       uint8_t factor = (uint8_t)(((uint32_t)i * 255UL) / max(1, flameClashPos));
       uint8_t r = (factor > 180) ? (factor - 180) * 3 : 0;
       uint8_t g = (factor * 160) >> 8;
       uint8_t b = 70 + ((uint16_t)factor * 185) / 255;
-      strip.setPixelColor(i, FastLEDDriver::Color(r, g, b));
+      strip.setPixelColor(i, FastLEDDriver::Color(
+        (colA.r * (255 - factor) + (uint16_t)r * factor) >> 8,
+        (colA.g * (255 - factor) + (uint16_t)g * factor) >> 8,
+        (colA.b * (255 - factor) + (uint16_t)b * factor) >> 8
+      ));
     }
 
-    // P2: Red Inferno Forge (clash..NUM_LEDS) -> gradients from white-hot to deep red
+    // Side B Forge (clash..NUM_LEDS) -> gradients from white-hot to gamer B color
     for (int i = flameClashPos + 1; i < NUM_LEDS; i++) {
       int distFromClash = i - flameClashPos;
       int span = NUM_LEDS - 1 - flameClashPos;
@@ -1167,7 +1612,11 @@ public:
       uint8_t r = 70 + ((uint16_t)factor * 185) / 255;
       uint8_t g = (factor * 100) >> 8;
       uint8_t b = (factor > 180) ? (factor - 180) * 3 : 0;
-      strip.setPixelColor(i, FastLEDDriver::Color(r, g, b));
+      strip.setPixelColor(i, FastLEDDriver::Color(
+        (colB.r * (255 - factor) + (uint16_t)r * factor) >> 8,
+        (colB.g * (255 - factor) + (uint16_t)g * factor) >> 8,
+        (colB.b * (255 - factor) + (uint16_t)b * factor) >> 8
+      ));
     }
 
     if (flameClashPos >= 0 && flameClashPos < NUM_LEDS) {
@@ -1180,31 +1629,43 @@ public:
 // --- Game 4: "Meteor Deflector" (High-Speed Comet Rally) ---
 class MeteorDeflectorGame {
 private:
+  GamerHandler& gamers;
   unsigned long lastUpdate = 0;
   float gameMeteorPos;
   float gameMeteorSpeed;
-  bool roundOver;
-  unsigned long roundOverTime;
 
 public:
-  MeteorDeflectorGame()
-    : gameMeteorPos((float)NUM_LEDS * 0.5f),
-      gameMeteorSpeed(max(0.3f, (float)NUM_LEDS * (1.1f / 60.0f))),
-      roundOver(false), roundOverTime(0) {}
+  MeteorDeflectorGame(GamerHandler& gh)
+    : gamers(gh), gameMeteorPos((float)NUM_LEDS * 0.5f),
+      gameMeteorSpeed(max(0.3f, (float)NUM_LEDS * (1.1f / 60.0f))) {}
 
   void reset() {
     gameMeteorPos = (float)NUM_LEDS * 0.5f;
     float baseSpeed = max(0.3f, (float)NUM_LEDS * (1.1f / 60.0f));
     gameMeteorSpeed = (random(0, 2) == 0 ? baseSpeed : -baseSpeed);
-    roundOver = false;
+    gamers.resetRound();
   }
+
+  float getMeteorPos() const { return gameMeteorPos; }
+  float getMeteorSpeed() const { return gameMeteorSpeed; }
 
   void update(unsigned long currentMillis) {
     if (currentMillis - lastUpdate < 20) return;
     lastUpdate = currentMillis;
 
-    if (roundOver) {
-      if (currentMillis - roundOverTime > 2000) reset();
+    if (gamers.isRoundOver()) {
+      if (currentMillis - gamers.getRoundOverTime() > 2000) {
+        reset();
+      } else {
+        uint8_t flash = ((currentMillis - gamers.getRoundOverTime()) / 120) % 2 == 0 ? 255 : 40;
+        CRGB winCol = gamers.getRoundWinnerColor();
+        uint16_t start = (gamers.getRoundWinnerSide() == SIDE_A) ? (NUM_LEDS - 40) : 0;
+        uint16_t end = (gamers.getRoundWinnerSide() == SIDE_A) ? NUM_LEDS : 40;
+        for (uint16_t i = start; i < end; i++) {
+          strip.setPixelColor(i, FastLEDDriver::Color(scale8(winCol.r, flash), scale8(winCol.g, flash), scale8(winCol.b, flash)));
+        }
+        strip.show();
+      }
       return;
     }
 
@@ -1212,7 +1673,7 @@ public:
     uint16_t defenseLeds = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100)); // ~15%
     float maxSpeed = max(0.8f, (float)NUM_LEDS * (3.2f / 60.0f));
 
-    if (btnP1.wasPressed()) {
+    if (gamers.wasPressed(SIDE_A)) {
       if (gameMeteorPos >= 0.0f && gameMeteorPos <= (float)defenseLeds && gameMeteorSpeed < 0.0f) {
         float bonus = ((float)defenseLeds - gameMeteorPos) * (1.8f / (float)defenseLeds);
         gameMeteorSpeed = abs(gameMeteorSpeed) * 1.14f + bonus;
@@ -1220,7 +1681,7 @@ public:
       }
     }
 
-    if (btnP2.wasPressed()) {
+    if (gamers.wasPressed(SIDE_B)) {
       float p2ZoneStart = (float)(NUM_LEDS - 1 - defenseLeds);
       if (gameMeteorPos >= p2ZoneStart && gameMeteorPos <= (float)(NUM_LEDS - 1) && gameMeteorSpeed > 0.0f) {
         float bonus = (gameMeteorPos - p2ZoneStart) * (1.8f / (float)defenseLeds);
@@ -1229,9 +1690,10 @@ public:
       }
     }
 
-    if (gameMeteorPos < -1.0f || gameMeteorPos > (float)NUM_LEDS) {
-      roundOver = true;
-      roundOverTime = currentMillis;
+    if (gameMeteorPos < -1.0f) {
+      gamers.setRoundWinner(SIDE_B, currentMillis);
+    } else if (gameMeteorPos > (float)NUM_LEDS) {
+      gamers.setRoundWinner(SIDE_A, currentMillis);
     }
 
     uint8_t baseR = rotaryColorKnob.getR();
@@ -1240,8 +1702,10 @@ public:
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
       strip.setPixelColor(i, FastLEDDriver::Color((baseR * 50) >> 8, (baseG * 50) >> 8, (baseB * 50) >> 8));
     }
-    for (uint16_t i = 0; i < defenseLeds; i++) strip.setPixelColor(i, FastLEDDriver::Color(10, 80, 220));
-    for (uint16_t i = NUM_LEDS - defenseLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, FastLEDDriver::Color(220, 60, 10));
+    CRGB colA = gamers.getSideColor(SIDE_A);
+    CRGB colB = gamers.getSideColor(SIDE_B);
+    for (uint16_t i = 0; i < defenseLeds; i++) strip.setPixelColor(i, FastLEDDriver::Color((colA.r * 200) >> 8, (colA.g * 200) >> 8, (colA.b * 200) >> 8));
+    for (uint16_t i = NUM_LEDS - defenseLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, FastLEDDriver::Color((colB.r * 200) >> 8, (colB.g * 200) >> 8, (colB.b * 200) >> 8));
 
     int idx = (int)round(gameMeteorPos);
     if (idx >= 0 && idx < NUM_LEDS) {
@@ -1256,31 +1720,43 @@ public:
 // --- Game 5: "Cylon Clash" (Hyper-Pong Beam Duel) ---
 class CylonClashGame {
 private:
+  GamerHandler& gamers;
   unsigned long lastUpdate = 0;
   float puckPos;
   float puckSpeed;
-  bool roundOver;
-  unsigned long roundOverTime;
 
 public:
-  CylonClashGame()
-    : puckPos((float)NUM_LEDS * 0.5f),
-      puckSpeed(max(0.3f, (float)NUM_LEDS * (1.2f / 60.0f))),
-      roundOver(false), roundOverTime(0) {}
+  CylonClashGame(GamerHandler& gh)
+    : gamers(gh), puckPos((float)NUM_LEDS * 0.5f),
+      puckSpeed(max(0.3f, (float)NUM_LEDS * (1.2f / 60.0f))) {}
 
   void reset() {
     puckPos = (float)NUM_LEDS * 0.5f;
     float baseSpeed = max(0.3f, (float)NUM_LEDS * (1.2f / 60.0f));
     puckSpeed = (random(0, 2) == 0 ? baseSpeed : -baseSpeed);
-    roundOver = false;
+    gamers.resetRound();
   }
+
+  float getPuckPos() const { return puckPos; }
+  float getPuckSpeed() const { return puckSpeed; }
 
   void update(unsigned long currentMillis) {
     if (currentMillis - lastUpdate < 18) return;
     lastUpdate = currentMillis;
 
-    if (roundOver) {
-      if (currentMillis - roundOverTime > 2000) reset();
+    if (gamers.isRoundOver()) {
+      if (currentMillis - gamers.getRoundOverTime() > 2000) {
+        reset();
+      } else {
+        uint8_t flash = ((currentMillis - gamers.getRoundOverTime()) / 120) % 2 == 0 ? 255 : 40;
+        CRGB winCol = gamers.getRoundWinnerColor();
+        uint16_t start = (gamers.getRoundWinnerSide() == SIDE_A) ? (NUM_LEDS - 40) : 0;
+        uint16_t end = (gamers.getRoundWinnerSide() == SIDE_A) ? NUM_LEDS : 40;
+        for (uint16_t i = start; i < end; i++) {
+          strip.setPixelColor(i, FastLEDDriver::Color(scale8(winCol.r, flash), scale8(winCol.g, flash), scale8(winCol.b, flash)));
+        }
+        strip.show();
+      }
       return;
     }
 
@@ -1288,7 +1764,7 @@ public:
     uint16_t defenseLeds = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100)); // ~15%
     float maxSpeed = max(0.8f, (float)NUM_LEDS * (3.4f / 60.0f));
 
-    if (btnP1.wasPressed()) {
+    if (gamers.wasPressed(SIDE_A)) {
       if (puckPos >= 0.0f && puckPos <= (float)defenseLeds && puckSpeed < 0.0f) {
         float bonus = ((float)defenseLeds - puckPos) * (1.6f / (float)defenseLeds);
         puckSpeed = abs(puckSpeed) * 1.15f + bonus;
@@ -1296,7 +1772,7 @@ public:
       }
     }
 
-    if (btnP2.wasPressed()) {
+    if (gamers.wasPressed(SIDE_B)) {
       float p2ZoneStart = (float)(NUM_LEDS - 1 - defenseLeds);
       if (puckPos >= p2ZoneStart && puckPos <= (float)(NUM_LEDS - 1) && puckSpeed > 0.0f) {
         float bonus = (puckPos - p2ZoneStart) * (1.6f / (float)defenseLeds);
@@ -1305,9 +1781,10 @@ public:
       }
     }
 
-    if (puckPos < -1.0f || puckPos > (float)NUM_LEDS) {
-      roundOver = true;
-      roundOverTime = currentMillis;
+    if (puckPos < -1.0f) {
+      gamers.setRoundWinner(SIDE_B, currentMillis);
+    } else if (puckPos > (float)NUM_LEDS) {
+      gamers.setRoundWinner(SIDE_A, currentMillis);
     }
 
     uint8_t baseR = rotaryColorKnob.getR();
@@ -1316,8 +1793,10 @@ public:
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
       strip.setPixelColor(i, FastLEDDriver::Color((baseR * 50) >> 8, (baseG * 50) >> 8, (baseB * 50) >> 8));
     }
-    for (uint16_t i = 0; i < defenseLeds; i++) strip.setPixelColor(i, FastLEDDriver::Color(15, 95, 215));
-    for (uint16_t i = NUM_LEDS - defenseLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, FastLEDDriver::Color(215, 75, 15));
+    CRGB colA = gamers.getSideColor(SIDE_A);
+    CRGB colB = gamers.getSideColor(SIDE_B);
+    for (uint16_t i = 0; i < defenseLeds; i++) strip.setPixelColor(i, FastLEDDriver::Color((colA.r * 200) >> 8, (colA.g * 200) >> 8, (colA.b * 200) >> 8));
+    for (uint16_t i = NUM_LEDS - defenseLeds; i < NUM_LEDS; i++) strip.setPixelColor(i, FastLEDDriver::Color((colB.r * 200) >> 8, (colB.g * 200) >> 8, (colB.b * 200) >> 8));
 
     int idx = (int)round(puckPos);
     if (idx >= 0 && idx < NUM_LEDS) {
@@ -1332,53 +1811,64 @@ public:
 // --- Game 6: "Territory Paint" (Rapid Wipe Wars) ---
 class TerritoryPaintGame {
 private:
+  GamerHandler& gamers;
   unsigned long lastUpdate = 0;
   int16_t paintBoundary;
-  bool roundOver;
-  unsigned long roundOverTime;
 
 public:
-  TerritoryPaintGame() : paintBoundary(NUM_LEDS / 2), roundOver(false), roundOverTime(0) {}
+  TerritoryPaintGame(GamerHandler& gh)
+    : gamers(gh), paintBoundary(NUM_LEDS / 2) {}
 
   void reset() {
     paintBoundary = NUM_LEDS / 2;
-    roundOver = false;
+    gamers.resetRound();
   }
 
   void update(unsigned long currentMillis) {
     if (currentMillis - lastUpdate < 20) return;
     lastUpdate = currentMillis;
 
-    if (roundOver) {
-      if (currentMillis - roundOverTime > 2000) reset();
+    if (gamers.isRoundOver()) {
+      if (currentMillis - gamers.getRoundOverTime() > 2000) {
+        reset();
+      } else {
+        uint8_t flash = ((currentMillis - gamers.getRoundOverTime()) / 120) % 2 == 0 ? 255 : 40;
+        CRGB winCol = gamers.getRoundWinnerColor();
+        uint16_t start = (gamers.getRoundWinnerSide() == SIDE_A) ? (NUM_LEDS - 40) : 0;
+        uint16_t end = (gamers.getRoundWinnerSide() == SIDE_A) ? NUM_LEDS : 40;
+        for (uint16_t i = start; i < end; i++) {
+          strip.setPixelColor(i, FastLEDDriver::Color(scale8(winCol.r, flash), scale8(winCol.g, flash), scale8(winCol.b, flash)));
+        }
+        strip.show();
+      }
       return;
     }
 
     int16_t pushStep = max(1, (int)(NUM_LEDS / 30));
 
-    if (btnP1.wasPressed()) {
+    if (gamers.wasPressed(SIDE_A)) {
       paintBoundary += pushStep;
       if (paintBoundary >= (int16_t)NUM_LEDS - 1) {
-        roundOver = true;
-        roundOverTime = currentMillis;
         paintBoundary = NUM_LEDS - 1;
+        gamers.setRoundWinner(SIDE_A, currentMillis);
       }
     }
 
-    if (btnP2.wasPressed()) {
+    if (gamers.wasPressed(SIDE_B)) {
       paintBoundary -= pushStep;
       if (paintBoundary <= 0) {
-        roundOver = true;
-        roundOverTime = currentMillis;
         paintBoundary = 0;
+        gamers.setRoundWinner(SIDE_B, currentMillis);
       }
     }
 
+    CRGB colA = gamers.getSideColor(SIDE_A);
+    CRGB colB = gamers.getSideColor(SIDE_B);
     for (int i = 0; i <= paintBoundary; i++) {
-      strip.setPixelColor(i, FastLEDDriver::Color(14, 165, 233)); // Sky Blue
+      strip.setPixelColor(i, colA);
     }
     for (int i = paintBoundary + 1; i < NUM_LEDS; i++) {
-      strip.setPixelColor(i, FastLEDDriver::Color(225, 29, 72));  // Neon Rose
+      strip.setPixelColor(i, colB);
     }
     if (paintBoundary >= 0 && paintBoundary < NUM_LEDS) {
       strip.setPixelColor(paintBoundary, FastLEDDriver::Color(255, 255, 255));
@@ -1397,12 +1887,12 @@ CometMeteorLight    lightCometMeteor;
 CylonScannerLight   lightCylonScanner;
 ColorWipeLight      lightColorWipe;
 
-ResonancePulseGame  gameResonancePulse;
-SparkleRushGame     gameSparkleRush;
-FlameTugGame        gameFlameTug;
-MeteorDeflectorGame gameMeteorDeflector;
-CylonClashGame      gameCylonClash;
-TerritoryPaintGame  gameTerritoryPaint;
+ResonancePulseGame  gameResonancePulse(gamerHandler);
+SparkleRushGame     gameSparkleRush(gamerHandler);
+FlameTugGame        gameFlameTug(gamerHandler);
+MeteorDeflectorGame gameMeteorDeflector(gamerHandler);
+CylonClashGame      gameCylonClash(gamerHandler);
+TerritoryPaintGame  gameTerritoryPaint(gamerHandler);
 
 void resetActiveGame(GameId game) {
   switch (game) {
@@ -1438,7 +1928,321 @@ void updateActiveLight(LightModeId mode, unsigned long currentMillis) {
 }
 
 // ============================================================================
-// 12. Serial Command Parser
+// 12. RobotGamer Autonomous NPC Controller
+// Simulates realistic opponent button presses across all 6 games via GamerHandler
+// ============================================================================
+class RobotGamer {
+private:
+  GamerHandler& gamers;
+  unsigned long lastActionTime = 0;
+  unsigned long nextActionInterval = 150;
+  bool hasDeflectedThisPass = false;
+  bool hasPressedThisPeak = false;
+  unsigned long targetPeakTime = 0;
+
+public:
+  RobotGamer(GamerHandler& gh)
+    : gamers(gh), lastActionTime(0), nextActionInterval(150),
+      hasDeflectedThisPass(false), hasPressedThisPeak(false), targetPeakTime(0) {}
+
+  void resetRound() {
+    hasDeflectedThisPass = false;
+    hasPressedThisPeak = false;
+    targetPeakTime = 0;
+    lastActionTime = millis();
+    nextActionInterval = random(130, 180);
+  }
+
+  void update(unsigned long currentMillis, GameId game) {
+    PlayerSide robotSide = gamers.getRobotSide();
+
+    if (gamers.isRoundOver()) return;
+
+    switch (game) {
+      case GAME_RESONANCE_PULSE: {
+        const unsigned long BREATH_PERIOD = 7500;
+        float phase = (float)(currentMillis % BREATH_PERIOD) / (float)BREATH_PERIOD;
+        float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
+
+        if (wave >= 0.88f) {
+          if (!hasPressedThisPeak && targetPeakTime == 0) {
+            targetPeakTime = currentMillis + random(70, 210);
+          }
+          if (targetPeakTime > 0 && currentMillis >= targetPeakTime && !hasPressedThisPeak) {
+            gamers.triggerRobotPress();
+            hasPressedThisPeak = true;
+            targetPeakTime = 0;
+          }
+        } else if (wave < 0.75f) {
+          hasPressedThisPeak = false;
+          targetPeakTime = 0;
+        }
+        break;
+      }
+
+      case GAME_SPARKLE_RUSH: {
+        float pos = gameSparkleRush.getNovaPos();
+        float spd = gameSparkleRush.getNovaSpeed();
+        uint16_t shield = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100));
+
+        if (robotSide == SIDE_B) {
+          float zoneStart = (float)(NUM_LEDS - 1 - shield);
+          if (spd > 0.0f) {
+            if (pos >= zoneStart + shield * 0.40f && !hasDeflectedThisPass) {
+              gamers.triggerRobotPress();
+              hasDeflectedThisPass = true;
+            }
+          } else {
+            hasDeflectedThisPass = false;
+          }
+        } else { // Robot is SIDE_A
+          if (spd < 0.0f) {
+            if (pos <= (float)shield * 0.60f && !hasDeflectedThisPass) {
+              gamers.triggerRobotPress();
+              hasDeflectedThisPass = true;
+            }
+          } else {
+            hasDeflectedThisPass = false;
+          }
+        }
+        break;
+      }
+
+      case GAME_FLAME_TUG: {
+        // High-cadence bellows tapping (anti-spam is 120ms)
+        if (currentMillis - lastActionTime >= nextActionInterval) {
+          gamers.triggerRobotPress();
+          lastActionTime = currentMillis;
+          nextActionInterval = random(130, 180);
+        }
+        break;
+      }
+
+      case GAME_METEOR_DEFLECTOR: {
+        float pos = gameMeteorDeflector.getMeteorPos();
+        float spd = gameMeteorDeflector.getMeteorSpeed();
+        uint16_t defense = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100));
+
+        if (robotSide == SIDE_B) {
+          float zoneStart = (float)(NUM_LEDS - 1 - defense);
+          if (spd > 0.0f) {
+            if (pos >= zoneStart + defense * 0.40f && !hasDeflectedThisPass) {
+              gamers.triggerRobotPress();
+              hasDeflectedThisPass = true;
+            }
+          } else {
+            hasDeflectedThisPass = false;
+          }
+        } else { // Robot is SIDE_A
+          if (spd < 0.0f) {
+            if (pos <= (float)defense * 0.60f && !hasDeflectedThisPass) {
+              gamers.triggerRobotPress();
+              hasDeflectedThisPass = true;
+            }
+          } else {
+            hasDeflectedThisPass = false;
+          }
+        }
+        break;
+      }
+
+      case GAME_CYLON_CLASH: {
+        float pos = gameCylonClash.getPuckPos();
+        float spd = gameCylonClash.getPuckSpeed();
+        uint16_t defense = max((uint16_t)1, (uint16_t)((NUM_LEDS * 15 + 50) / 100));
+
+        if (robotSide == SIDE_B) {
+          float zoneStart = (float)(NUM_LEDS - 1 - defense);
+          if (spd > 0.0f) {
+            if (pos >= zoneStart + defense * 0.40f && !hasDeflectedThisPass) {
+              gamers.triggerRobotPress();
+              hasDeflectedThisPass = true;
+            }
+          } else {
+            hasDeflectedThisPass = false;
+          }
+        } else { // Robot is SIDE_A
+          if (spd < 0.0f) {
+            if (pos <= (float)defense * 0.60f && !hasDeflectedThisPass) {
+              gamers.triggerRobotPress();
+              hasDeflectedThisPass = true;
+            }
+          } else {
+            hasDeflectedThisPass = false;
+          }
+        }
+        break;
+      }
+
+      case GAME_TERRITORY_PAINT: {
+        // High-frequency turf war button mashing
+        if (currentMillis - lastActionTime >= nextActionInterval) {
+          gamers.triggerRobotPress();
+          lastActionTime = currentMillis;
+          nextActionInterval = random(125, 175);
+        }
+        break;
+      }
+    }
+  }
+};
+
+RobotGamer robotGamer(gamerHandler);
+
+// ============================================================================
+// 13. Game Challenge, Play & Match Transition Methods
+// ============================================================================
+void startChallenge(GamerId who) {
+  systemState = STATE_CHALLENGE;
+  inGameMode = false;
+  gamerHandler.startChallenge(who);
+
+  Serial.println(F("========================================"));
+  Serial.print(F("[CHALLENGE] "));
+  Serial.print(gamerHandler.getCurrentPlayerName(who == GAMER_PLAYER_A ? SIDE_A : SIDE_B));
+  Serial.println(F(" initiated a game challenge!"));
+  Serial.print(F("Opponent LED is blinking (max 10 times) in "));
+  Serial.print(who == GAMER_PLAYER_A ? F("Player B") : F("Player A"));
+  Serial.println(F("'s color. Press opponent button to accept!"));
+  Serial.println(F("If no opponent accepts, RobotGamer will enter the match."));
+  Serial.println(F("========================================"));
+}
+
+void startGame(bool againstRobot) {
+  systemState = STATE_PLAYING;
+  inGameMode = true;
+  gamerHandler.startMatch(againstRobot);
+  robotGamer.resetRound();
+  resetActiveGame(gameKnob.getSelectedGame());
+  strip.clear();
+
+  Serial.println(F("========================================"));
+  Serial.print(F("[GAME START] Active Game: "));
+  Serial.println(gameKnob.getSelectedGameName());
+  if (againstRobot) {
+    Serial.print(F("Match Type: 1-Player vs RobotGamer (Robot plays on "));
+    Serial.print(gamerHandler.getRobotSide() == SIDE_A ? F("Side A") : F("Side B"));
+    Serial.println(F(")"));
+  } else {
+    Serial.println(F("Match Type: 2-Player Human Duel (Player A vs Player B)!"));
+  }
+  Serial.println(F("First to 5 points wins the match! Points indicated at strip ends."));
+  Serial.println(F("========================================"));
+}
+
+void updateChallenge(unsigned long currentMillis) {
+  // Continue updating ambient background on inner LEDs
+  updateActiveLight(currentLightMode, currentMillis);
+
+  GamerId challenger = gamerHandler.getChallenger();
+  if (challenger == GAMER_PLAYER_A) {
+    if (gamerHandler.wasPressed(SIDE_B)) {
+      startGame(false); // Player B accepted!
+      return;
+    }
+    if (gamerHandler.wasPressed(SIDE_A)) {
+      // Challenger pressed again -> cancel challenge
+      systemState = STATE_IDLE_AMBIENT;
+      strip.clear();
+      Serial.println(F("[Challenge Cancelled] Returning to ambient lighting."));
+      return;
+    }
+  } else if (challenger == GAMER_PLAYER_B) {
+    if (gamerHandler.wasPressed(SIDE_A)) {
+      startGame(false); // Player A accepted!
+      return;
+    }
+    if (gamerHandler.wasPressed(SIDE_B)) {
+      // Challenger pressed again -> cancel challenge
+      systemState = STATE_IDLE_AMBIENT;
+      strip.clear();
+      Serial.println(F("[Challenge Cancelled] Returning to ambient lighting."));
+      return;
+    }
+  }
+
+  // Update challenge blink and check timeout (10 blinks = 5.0 seconds)
+  if (gamerHandler.updateChallengeBlink(currentMillis)) {
+    Serial.println(F("[Challenge Timeout] No human opponent accepted within 10 blinks."));
+    Serial.println(F("Starting game against autonomous NPC: RobotGamer!"));
+    startGame(true); // Launch against RobotGamer
+    return;
+  }
+
+  strip.show(); // Refresh strip on blink toggle
+}
+
+void updatePlaying(unsigned long currentMillis) {
+  GameId game = gameKnob.getSelectedGame();
+
+  // If match is against autonomous NPC, update RobotGamer
+  if (gamerHandler.isRobot(gamerHandler.getRobotSide())) {
+    robotGamer.update(currentMillis, game);
+  }
+
+  // Update game frame and mechanics
+  updateActiveGame(game, currentMillis);
+
+  // Check round outcome and point tracking via GamerHandler
+  if (gamerHandler.isRoundOver() && !gamerHandler.isScoreTallied()) {
+    gamerHandler.awardRoundPoint();
+
+    if (gamerHandler.isRobot(gamerHandler.getRobotSide())) {
+      robotGamer.resetRound();
+    }
+
+    // Check match victory condition (5 points)
+    if (gamerHandler.isMatchWon()) {
+      systemState = STATE_MATCH_OVER;
+      inGameMode = false;
+      matchOverTime = currentMillis;
+
+      Serial.println(F("========================================"));
+      Serial.print(F("[MATCH WON!] "));
+      Serial.print(gamerHandler.getCurrentPlayerName(gamerHandler.getMatchWinnerSide()));
+      Serial.println(F(" has won the match (5 points)!"));
+      Serial.println(F("Triggering victory celebration on the LED strip!"));
+      Serial.println(F("========================================"));
+    }
+  }
+}
+
+void updateMatchOver(unsigned long currentMillis) {
+  const unsigned long CELEBRATION_DURATION = 4000; // 4 seconds celebration
+  if (currentMillis - matchOverTime >= CELEBRATION_DURATION) {
+    systemState = STATE_IDLE_AMBIENT;
+    gamerHandler.resetScores();
+    strip.clear();
+    Serial.println(F("[Match Celebration Complete] Returning to ambient lighting mode."));
+    return;
+  }
+
+  // Celebratory victory light effect across the strip in winner's color
+  CRGB winColor = gamerHandler.getMatchWinnerColor();
+
+  // Fast celebratory pulse wave
+  float phase = (float)((currentMillis - matchOverTime) % 600) / 600.0f;
+  float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
+  uint8_t br = 70 + (uint8_t)(wave * 185);
+
+  CRGB pulseCol = CRGB(
+    scale8(winColor.r, br),
+    scale8(winColor.g, br),
+    scale8(winColor.b, br)
+  );
+
+  for (uint16_t i = 0; i < NUM_LEDS; i++) {
+    leds[i] = pulseCol;
+    if (random(0, 35) == 0) {
+      leds[i] = CRGB(255, 255, 255); // Sparkling victory stars
+    }
+  }
+
+  strip.show(); // Note: renderScoreOverlay() will keep the winning score illuminated at the ends!
+}
+
+// ============================================================================
+// 14. Serial Command Parser
 // ============================================================================
 void handleSerialCommands() {
   static char numBuf[8];
@@ -1516,24 +2320,23 @@ void handleSerialCommands() {
       numIdx = 0;
       lastDigitTime = millis();
     } else if (c == '1') {
-      btnP1.triggerVirtualPress();
+      gamerHandler.triggerVirtualPress(SIDE_A);
     } else if (c == '2') {
-      btnP2.triggerVirtualPress();
+      gamerHandler.triggerVirtualPress(SIDE_B);
     } else if (c == 'm' || c == 'M') {
       currentLightMode = (LightModeId)(((int)currentLightMode + 1) % NUM_LIGHT_MODES);
       strip.clear();
       Serial.print(F("[Serial] Ambient Mode: "));
       Serial.println(LIGHT_MODE_NAMES[currentLightMode]);
     } else if (c == 'g' || c == 'G') {
-      inGameMode = !inGameMode;
-      if (inGameMode) {
-        resetActiveGame(gameKnob.getSelectedGame());
-        strip.clear();
-        Serial.print(F("[Game Mode Activated] -> "));
-        Serial.println(gameKnob.getSelectedGameName());
+      if (systemState == STATE_IDLE_AMBIENT) {
+        startChallenge(GAMER_PLAYER_A);
       } else {
+        systemState = STATE_IDLE_AMBIENT;
+        inGameMode = false;
+        gamerHandler.resetScores();
         strip.clear();
-        Serial.println(F("[Game Mode Deactivated] -> Ambient Lighting"));
+        Serial.println(F("[Serial 'g'] Exited Game Mode -> Ambient Lighting"));
       }
     } else if (c == 'c' || c == 'C') {
       rotaryColorKnob.stepHue(4000);
@@ -1543,7 +2346,7 @@ void handleSerialCommands() {
 }
 
 // ============================================================================
-// 13. Arduino setup() and loop()
+// 15. Arduino setup() and loop()
 // ============================================================================
 void setup() {
   rotaryColorKnob.begin();
@@ -1562,12 +2365,15 @@ void setup() {
   strip.setBrightness(brightnessKnob.getBrightness());
 
   currentLightMode = lightBehaviorKnob.getSelectedMode();
+  systemState = STATE_IDLE_AMBIENT;
+  gamerHandler.resetScores();
 
   Serial.println(F("BarCounter Light & Game System Initialized (FastLED SK6812, 12m)."));
   Serial.print(F("Initial Ambient Mode: "));
   Serial.println(lightBehaviorKnob.getSelectedModeName());
   Serial.print(F("Initial Game Selected: "));
   Serial.println(gameKnob.getSelectedGameName());
+  Serial.println(F("Press Player A (Pin 2) or Player B (Pin 4) button to challenge!"));
 }
 
 void loop() {
@@ -1587,8 +2393,10 @@ void loop() {
     Serial.print((int)newGame + 1);
     Serial.print(F(": "));
     Serial.println(gameKnob.getSelectedGameName());
-    if (inGameMode) {
+    if (systemState == STATE_PLAYING) {
       resetActiveGame(newGame);
+      gamerHandler.resetScores();
+      if (gamerHandler.isRobot(gamerHandler.getRobotSide())) robotGamer.resetRound();
       strip.clear();
     }
   }
@@ -1600,8 +2408,10 @@ void loop() {
     Serial.print((int)currentLightMode + 1);
     Serial.print(F(": "));
     Serial.println(lightBehaviorKnob.getSelectedModeName());
-    if (inGameMode) {
+    if (systemState != STATE_IDLE_AMBIENT) {
+      systemState = STATE_IDLE_AMBIENT;
       inGameMode = false;
+      gamerHandler.resetScores();
       Serial.println(F("[Exit Game] -> Returning to Ambient Lighting Mode"));
     }
     strip.clear();
@@ -1612,32 +2422,49 @@ void loop() {
 
   handleSerialCommands();
 
-  // 2. Dual Button Hold (P1 + P2 for 800 ms) toggles Game Mode
+  // 2. Dual Button Hold (P1 + P2 for 800 ms) aborts game and returns to ambient
   static unsigned long dualHoldTime = 0;
-  if (btnP1.isDown() && btnP2.isDown()) {
+  if (gamerHandler.isDown(SIDE_A) && gamerHandler.isDown(SIDE_B)) {
     if (dualHoldTime == 0) dualHoldTime = currentMillis;
     if (currentMillis - dualHoldTime > 800) {
-      inGameMode = !inGameMode;
       dualHoldTime = currentMillis + 2000;
-      if (inGameMode) {
-        GameId sel = gameKnob.getSelectedGame();
-        resetActiveGame(sel);
-        strip.clear();
-        Serial.print(F("[Dual Hold] Launching Game: "));
-        Serial.println(gameKnob.getSelectedGameName());
-      } else {
+      if (systemState != STATE_IDLE_AMBIENT) {
+        systemState = STATE_IDLE_AMBIENT;
+        inGameMode = false;
+        gamerHandler.resetScores();
         strip.clear();
         Serial.println(F("[Dual Hold] Exited Game Mode -> Ambient Lighting"));
+      } else {
+        startChallenge(GAMER_PLAYER_A);
       }
     }
   } else {
     dualHoldTime = 0;
   }
 
-  // 3. Update Active Controller
-  if (inGameMode) {
-    updateActiveGame(gameKnob.getSelectedGame(), currentMillis);
-  } else {
-    updateActiveLight(currentLightMode, currentMillis);
+  // 3. System State Machine Execution
+  switch (systemState) {
+    case STATE_IDLE_AMBIENT:
+      // Ambient lighting mode. Check if Player A or B initiates a game challenge!
+      if (gamerHandler.wasPressed(SIDE_A)) {
+        startChallenge(GAMER_PLAYER_A);
+      } else if (gamerHandler.wasPressed(SIDE_B)) {
+        startChallenge(GAMER_PLAYER_B);
+      } else {
+        updateActiveLight(currentLightMode, currentMillis);
+      }
+      break;
+
+    case STATE_CHALLENGE:
+      updateChallenge(currentMillis);
+      break;
+
+    case STATE_PLAYING:
+      updatePlaying(currentMillis);
+      break;
+
+    case STATE_MATCH_OVER:
+      updateMatchOver(currentMillis);
+      break;
   }
 }
