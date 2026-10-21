@@ -1,6 +1,6 @@
-# Virtual NeoPixel Strip (60 LEDs/m) & Bar Counter Light System
+# Virtual NeoPixel Strip (12m / 720 LEDs) & Bar Counter Arcade System
 
-High-fidelity Dual-Target NeoPixel controller for Arduino Uno R3 with Linux-based photorealistic visualizer for development and standalone production deployment.
+High-fidelity Dual-Target FastLED controller for Arduino Uno R3 with Linux-based photorealistic visualizer for development and standalone physical deployment.
 
 ---
 
@@ -10,76 +10,108 @@ The system provides two compile-time implementations in [`barcounter_light.ino`]
 
 ```cpp
 #define BACKEND_VIRTUAL_SERIAL   0  // Implementation A: Stream pixel data to Linux Visualizer
-#define BACKEND_ADAFRUIT_REAL    1  // Implementation B: Drive physical WS2812B strip via Adafruit library
+#define BACKEND_FASTLED_REAL     1  // Implementation B: Drive physical SK6812 strip via FastLED library
 
 // >>> CONFIGURE ACTIVE TARGET HERE <<<
-#define STRIP_BACKEND            BACKEND_VIRTUAL_SERIAL
+#define STRIP_BACKEND            BACKEND_FASTLED_REAL
 ```
 
-### Implementation A: Virtual Visualizer (Development)
+### Implementation A: Virtual Visualizer (Development & Testing)
 - **Use Case**: Developing, testing animations, and tuning games on Linux without physical LEDs connected.
-- **Protocol**: When `strip.show()` is called, the Arduino transmits a compact 185-byte binary frame (`0xAA 0x55 0x01 [60] [180 bytes RGB] [XOR_CHECKSUM]`) over USB Serial at **115200 baud**.
-- **Visualizer**: [`bridge.py`](file:///home/nils/archiv_master/virtual_neopixel/bridge.py) captures the frames and renders them on an HTML5/Canvas UI with realistic 5050 LED geometry, acrylic diffuser simulation, and ambient wall radiance.
+- **Protocol (CMD 0x02)**: When `strip.show()` is called, the Arduino transmits an extended 2172-byte binary frame (`0xAA 0x55 0x02 [COUNT_HI] [COUNT_LO] [GamerA_RGB] [GamerB_RGB] [720 * 3 bytes RGB] [XOR_CHECKSUM]`) over USB Serial at **115200 baud**.
+- **Visualizer**: [`bridge.py`](file:///home/nils/archiv_master/virtual_neopixel/bridge.py) captures frames and renders them on an HTML5/Canvas UI with realistic 5050 LED geometry, acrylic diffuser optics, shelf reflections, dedicated player station hardware LEDs, and live score pips.
 
-### Implementation B: Physical NeoPixel (Production)
-- **Use Case**: Standalone deployment on the bar counter. **No Linux machine required.**
-- **Protocol**: Directly drives the physical WS2812B LED strip on **Pin 6** via the official `Adafruit_NeoPixel` 800 kHz driver.
-- All Serial streaming code is compiled out; zero overhead on the ATmega328P.
+### Implementation B: Physical FastLED (Production Deployment)
+- **Use Case**: Standalone deployment on the 12-meter bar counter. **No Linux machine required.**
+- **Protocol**: Drives the physical 12-meter SK6812 LED strip on **Pin 6** and dedicated player LEDs on **Pin 3 & Pin 5** via the **FastLED** driver framework.
+- Serial streaming code is compiled out; zero CPU overhead on the ATmega328P.
 
 ---
 
 ## 2. Hardware Wiring (Arduino Uno R3)
 
-| Component | Arduino Pin | Mode | Notes |
-| :--- | :--- | :--- | :--- |
-| **Rotary Color Knob** | `Pin A3` | `INPUT` (Analog) | Potentiometer wiper (outer terminals to 5V & GND). Maps full dial (0..1010 counts) smoothly across complete rainbow (0..65535 hue); end stop (1012–1023 raw) adds pure White |
-| **Rotary Brightness Knob** | `Pin A2` | `INPUT` (Analog) | Potentiometer wiper (outer terminals to 5V & GND). Maps 0..1023 to 0..255 global brightness (0–100%) |
-| **Player 1 Button** | `Pin 2` | `INPUT_PULLUP` | Momentary pushbutton to GND |
-| **Player 2 Button** | `Pin 4` | `INPUT_PULLUP` | Momentary pushbutton to GND |
-| **Mode Switch** | `Pin 7` | `INPUT_PULLUP` | Momentary pushbutton to GND |
-| **Physical Strip Data** | `Pin 6` | `OUTPUT` | Used in Implementation B (via 330Ω resistor to DIN) |
-
-*Tip: Holding both Player 1 and Player 2 buttons simultaneously for 800 ms toggles Competitive Game Mode on and off.*
-
----
-
-## 3. Visualization Modes & Two-Player Competitive Games
-
-All 6 ambient modes dynamically draw their base mood color from the **Rotary Color Knob (Pin A3)** following the continuous rainbow spectrum (0° Red $\rightarrow$ 60° Yellow $\rightarrow$ 120° Green $\rightarrow$ 180° Cyan $\rightarrow$ 240° Blue $\rightarrow$ 300° Magenta $\rightarrow$ 360° Red), with pure White added at the end of the dial:
-
-| Mode | Ambient Behavior (Follows Rotary Color) | Competitive Game (Two 1-Button Controls) | Ambient Illumination Floor |
-| :--- | :--- | :--- | :--- |
-| **1. Breathing / Pulse** | Gentle sinusoidal breathing pulse (7.5s cycle) in rotary base color (or pure White). | **"Resonance Pulse" (Rhythm Tug-of-War)**<br>An energy nexus breathes in the center. Tap your button at the apex of inhalation to push the node toward the opponent's goal. | Enforced $\ge 35\%$ average brightness. |
-| **2. Twinkle / Sparkle** | Starry fairy lights shimmering in rotary base color (or pure White shimmer) with white-hot spark envelopes. | **"Sparkle Rush" (Nova Reflector)**<br>A fast "Nova Sparkle" bounces across the strip. Press your button within your defense zone (P1: 0–8, P2: 51–59) to reflect it back. | Guaranteed $\ge 35\%$ ambient fairy sparkle. |
-| **3. Fire / Flame** | Thermodynamic heat simulation (Fire2012) ramped in rotary flame tint (or silver embers when White). | **"Flame Tug" (Bellows Forge Clash)**<br>Blue Forge (P1) vs. Red Forge (P2). Tapping pumps oxygen into your bellows. Cadence anti-spam rewards steady rhythm. | Embers ensure continuous $\ge 35\%$ hearth illumination. |
-| **4. Comet / Meteor** | Graceful gliding shooting star (12s sweep) with long glowing tail in rotary color (or elegant White). | **"Meteor Deflector" (High-Speed Return)**<br>Smash the incoming comet back at the goal line before it breaches. | Guaranteed $\ge 35\%$ baseline glow. |
-| **5. Scanner / Cylon** | Smooth Larson eye with cosine deceleration (6s sweep) in rotary color (or clean White). | **"Cylon Clash" (Laser Beam Volley)**<br>Return the hyper-fast laser beam before it reaches your end. | Clamped to $\ge 35\%$ ambient floor. |
-| **6. Color Wipe** | Meditative progressive color roll across harmonic offsets (or 4 warm/cool white tints when White). | **"Territory Paint" (Rapid Wipe Wars)**<br>Rapid-tap tug-of-war painting the strip in your color from both sides. | Enforced $\ge 35\%$ average brightness. |
+| Component | Arduino Pin | Mode | Connection Details | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| **Player Station A Button** | `Pin 2` | `INPUT_PULLUP` | Pushbutton terminal to Pin 2, other to GND | Action button for Player A (Left side) |
+| **Player Station A LED** | `Pin 3` | `OUTPUT` | Data IN via $330\text{--}470\,\Omega$ resistor, $+5\text{V}$, GND | Dedicated SK6812 LED mounted next to Button A |
+| **Player Station B Button** | `Pin 4` | `INPUT_PULLUP` | Pushbutton terminal to Pin 4, other to GND | Action button for Player B (Right side) |
+| **Player Station B LED** | `Pin 5` | `OUTPUT` | Data IN via $330\text{--}470\,\Omega$ resistor, $+5\text{V}$, GND | Dedicated SK6812 LED mounted next to Button B |
+| **Physical Strip Data** | `Pin 6` | `OUTPUT` | FastLED Data IN via $330\text{--}470\,\Omega$ resistor | Drives 12m SK6812 strip (720 addressable LEDs) |
+| **Game Selection Pot** | `Pin A1` | `INPUT` (Analog) | 10k potentiometer wiper (0..1023) | Selects active arcade game across 6 equal dial zones |
+| **Master Brightness Pot** | `Pin A2` | `INPUT` (Analog) | 10k potentiometer wiper (0..1023) | Master luminosity ($0\%\text{--}100\%$) across all modes |
+| **Mood / Base-Color Pot** | `Pin A3` | `INPUT` (Analog) | 10k potentiometer wiper (0..1023) | 360° rainbow spectrum ($0\text{--}65535$ hue) + pure White |
+| **Light Behavior Pot** | `Pin A4` | `INPUT` (Analog) | 10k potentiometer wiper (0..1023) | Selects active ambient mode across 6 equal dial zones |
+| **Entropy Source** | `Pin A0` | `INPUT` (Floating) | Left unconnected | Hardware entropy source for `randomSeed()` |
 
 ---
 
-## 4. Running the Linux Visualizer
+## 3. Dedicated Player Station LEDs (Pins 3 & 5)
+
+Each player station has a dedicated single SK6812 RGB LED mounted right beside the action button:
+
+| System State | Player A LED (Pin 3) | Player B LED (Pin 5) | Behavioral Purpose |
+| :--- | :--- | :--- | :--- |
+| **`STATE_IDLE_AMBIENT`** | Soft Cyan (`CRGB(0, 180, 255)` @ 27%) | Soft Coral Red (`CRGB(255, 30, 70)` @ 27%) | Subtle ambient beacon guiding bar patrons to the buttons |
+| **`STATE_CHALLENGE`** *(P1 initiated)* | **Solid Cyan** (100% full brightness) | **Blinking Coral Red** (250ms ON / 250ms OFF, max 10x) | Visually summons Player B across the bar counter to duel |
+| **`STATE_CHALLENGE`** *(P2 initiated)* | **Blinking Cyan** (250ms ON / 250ms OFF, max 10x) | **Solid Coral Red** (100% full brightness) | Visually summons Player A across the bar counter to duel |
+| **`STATE_CHALLENGE`** *(Timeout)* | Station color (or solid Amber if Robot) | Station color (or solid Amber if Robot) | Turns solid **Neon Amber Gold** when RobotGamer takes over |
+| **`STATE_PLAYING`** *(Normal)* | Active Side A Color (`getSideColor(SIDE_A)`) | Active Side B Color (`getSideColor(SIDE_B)`) | Continuous player identity indicator |
+| **`STATE_PLAYING`** *(Button Press)* | **Dazzling White Flash (80 ms)** | **Dazzling White Flash (80 ms)** | **Instant tactile/visual feedback** on every button tap |
+| **`STATE_PLAYING`** *(Round Over)* | Winner: Rapid Pulse; Loser: Dimmed | Winner: Rapid Pulse; Loser: Dimmed | Immediate round outcome feedback |
+| **`STATE_MATCH_OVER`** | Winner: 100ms Victory Strobe; Loser: OFF | Winner: 100ms Victory Strobe; Loser: OFF | Synchronized with 12m strip match celebration |
+
+---
+
+## 4. The 6 Ambient Modes & 6 Arcade Games
+
+### The 6 Ambient Lighting Modes (Potentiometer A4)
+1. **Breathing / Pulse**: Meditative 7.5s sinusoidal breathing cycle between 42% and 82% brightness in rotary base color.
+2. **Twinkle / Sparkle**: Drifting starry shimmer with brilliant white glints across 12 meters.
+3. **Fire / Flame**: Thermodynamic hearth fire with convective cooling, thermal heat transfer, and embers.
+4. **Comet / Meteor**: Gentle shooting star gliding across 12 meters with 20% fading tail.
+5. **Scanner / Cylon**: Smooth 6.0s Larson scanner eye with Gaussian halo across 12 meters.
+6. **Color Wipe**: Progressive chromatic roll cycling harmonic color offsets.
+
+### The 6 Competitive Arcade Games (Potentiometer A1)
+1. **Resonance Pulse**: Rhythm Wave Tug-of-War. Tap button during peak breath ($\ge 88\%$ resonance) to push the energy nexus 48 LEDs toward opponent's goal.
+2. **Sparkle Rush**: High-Velocity Nova Deflector. Deflect the bouncing Nova inside your 108-LED defense shield; edge returns grant up to $+112\%$ speed boost.
+3. **Flame Tug**: Bellows Forge Combustion Clash. Rapid-fire button mashing pumps your forge's bellows, advancing your combustion front by 24 LEDs per tap.
+4. **Meteor Deflector**: High-Speed Comet Pong. Deflect the incoming meteor within your defense sector with speed acceleration.
+5. **Cylon Clash**: Hyper-Pong Beam Duel. Intercept the high-speed laser puck as it enters your sector; each return accelerates the volley by $+115\%$.
+6. **Territory Paint**: Rapid Wipe Wars. Rapidly tap to advance your color paint stroke across the 12 meters (24 LEDs per tap) until one side claims the entire counter.
+
+---
+
+## 5. Live Scoreboard Overlay at Strip Ends
+- **Side A Score Meter**: Strip LEDs `0..4` illuminate inward in Player A's color (or Robot's Amber).
+- **Side B Score Meter**: Strip LEDs `719..715` illuminate inward in Player B's color (or Robot's Amber).
+- Matches are played first to **5 points** (`MATCH_WIN_SCORE = 5`).
+- Match victory triggers a **4-second celebratory victory light show** across all 12 meters before returning to ambient lighting.
+
+---
+
+## 6. Running the Linux Visualizer
 
 ### Quick Start (Demo Mode or with Arduino):
 ```bash
-# Auto-detects /dev/ttyACM0 or falls back to demo mode if no Arduino is connected:
+# Auto-detects /dev/ttyACM0 or falls back to built-in 720-LED demo generator:
 python3 virtual_neopixel/bridge.py
 ```
 
-Then open your browser (e.g. Firefox) at:
+Then open your browser at:
 👉 **`http://localhost:8080`**
 
 ### Keyboard & UI Controls in the Visualizer:
-- **`[A]` Key**: Player 1 Button
-- **`[L]` Key**: Player 2 Button
-- **`[M]` Key**: Toggle Mode (Cycles 1 through 6)
-- **`[G]` Key**: Start / Stop Competition Game
-- **`[C]` Key / UI Slider**: Step / Adjust Rotary Base Color (Cycles full rainbow 0°..360° $\rightarrow$ White added at end, +22° ~ +4000/65535 hue per step)
-- **`[W]` Key / Serial**: Direct shortcut to set Rotary Base Color to pure White
-- **`[B]` Key / UI Slider**: Step / Adjust Global Brightness (+25 / 255 per step)
+- **`[A]` Key**: Player Station A Action Button (Pin 2 / Pin 3)
+- **`[L]` Key**: Player Station B Action Button (Pin 4 / Pin 5)
+- **`[G]` Key**: Game-Start Challenge / Toggle Match
+- **`[M]` Key / Slider**: Cycle or Dial Pot A4 Ambient Light Mode (0..5)
+- **`[K]` Key / Slider**: Cycle or Dial Pot A1 Game Selection (0..5)
+- **`[C]` Key / Slider**: Cycle or Dial Pot A3 Mood Color (Rainbow 0°..360° + Pure White)
+- **`[B]` Key / Slider**: Adjust Pot A2 Master Brightness (0..255)
 
 ### Running Automated Protocol Verification:
 ```bash
-python3 virtual_neopixel/simulator.py --test-protocol
+python3 virtual_neopixel/simulator.py
 ```
-
+Validates the 720-LED CMD 0x02 protocol framing, dedicated gamer LEDs, XOR checksum integrity, legacy CMD 0x01 compatibility, and minimum illumination guard.

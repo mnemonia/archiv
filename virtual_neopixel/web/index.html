@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Virtual NeoPixel Strip (60 LEDs/m) - Bar Counter / Shelf Visualizer</title>
+  <title>Virtual NeoPixel Strip (12m / 720 LEDs) - Bar Counter & Arcade System</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,8 +12,10 @@
     <header class="header">
       <div class="logo-title">
         <span class="status-indicator" id="statusIndicator"></span>
-        <h1>Archiv Bar - Virtual NeoPixel Strip</h1>
-        <span class="badge">60 LEDs/m (WS2812B)</span>
+        <div>
+          <h1>Archiv Bar - 12m Counter & Arcade System</h1>
+          <span class="badge">12m SK6812 Strip (720 LEDs) + Dual Dedicated Gamer LEDs</span>
+        </div>
       </div>
       <div class="telemetry">
         <div class="stat-box">
@@ -28,20 +30,36 @@
           <span class="stat-label">Ambient Lux</span>
           <span class="stat-value highlight" id="luxValue">0%</span>
         </div>
-        <div class="stat-box threshold-box" id="thresholdBox">
-          <span class="stat-label">Guard (&ge;35%)</span>
-          <span class="stat-value" id="guardStatus">ACTIVE</span>
+        <div class="stat-box">
+          <span class="stat-label">Match State</span>
+          <span class="stat-value state-badge" id="stateBadge">AMBIENT</span>
+        </div>
+        <div class="stat-box score-stat-box">
+          <span class="stat-label">Match Score</span>
+          <span class="stat-value score-value" id="matchScoreValue">A [0] - [0] B</span>
         </div>
       </div>
     </header>
 
-    <!-- Main Visual Stage: Virtual Bar Counter / Shelf -->
+    <!-- Visualizer Stage Controls (Full Strip vs Station Zoom) -->
+    <div class="stage-toolbar">
+      <span class="toolbar-label">Counter Viewport (12 Meters):</span>
+      <div class="view-btn-group">
+        <button class="view-btn active" id="viewFull" data-view="full" type="button">Full 12m Strip (720 LEDs)</button>
+        <button class="view-btn" id="viewStationA" data-view="stationA" type="button">Station A (LEDs 0..120)</button>
+        <button class="view-btn" id="viewCenter" data-view="center" type="button">Center Arena (LEDs 240..480)</button>
+        <button class="view-btn" id="viewStationB" data-view="stationB" type="button">Station B (LEDs 600..719)</button>
+      </div>
+      <span class="meter-info" id="meterInfo">Viewing: 0.0m &ndash; 12.0m (All 720 LEDs)</span>
+    </div>
+
+    <!-- Main Visual Stage: Virtual 12-Meter Bar Counter -->
     <main class="stage-section">
       <div class="shelf-backdrop" id="shelfBackdrop">
         <!-- Ambient Wall Glow / Reflection Layer -->
         <canvas id="ambientGlowCanvas" width="1280" height="280"></canvas>
 
-        <!-- NeoPixel 60-LED Physical Strip Canvas -->
+        <!-- NeoPixel 720-LED Physical Strip Canvas -->
         <div class="strip-housing" id="stripHousing">
           <canvas id="stripCanvas" width="1280" height="90"></canvas>
           <div class="diffuser-overlay" id="diffuserOverlay"></div>
@@ -54,55 +72,165 @@
 
     <!-- Interactive Game & Competition HUD -->
     <section class="game-hud">
+      <!-- Player Station A (Left End) -->
       <div class="player-panel player-1">
         <div class="player-header">
-          <span class="player-tag">Player 1 (Left)</span>
+          <div>
+            <span class="player-tag" id="tagPlayerA">Player Station A</span>
+            <div class="pin-subtext">Pin 2 (Button) &bull; Pin 3 (LED)</div>
+          </div>
           <span class="key-hint">Press [A]</span>
         </div>
-        <button class="arcade-btn btn-p1" id="btnP1" type="button">P1 BUTTON</button>
-        <div class="zone-label">Cyan / Blue Forge</div>
+
+        <!-- Dedicated Hardware Station: LED + Button -->
+        <div class="station-hardware">
+          <div class="dedicated-led-pod">
+            <span class="pod-label">LED (Pin 3)</span>
+            <div class="hardware-led" id="ledStationA" title="Dedicated SK6812 LED for Gamer A on Pin 3">
+              <div class="led-die" id="ledDieA"></div>
+            </div>
+          </div>
+          <button class="arcade-btn btn-p1" id="btnP1" type="button">
+            <span class="btn-text">BUTTON A</span>
+            <span class="btn-subtext">Left Station</span>
+          </button>
+        </div>
+
+        <!-- Live 5-Point Strip-End Score Pips (LEDs 0..4) -->
+        <div class="score-pips-container">
+          <span class="pips-label">Score (Strip LEDs 0..4):</span>
+          <div class="score-pips" id="pipsA">
+            <span class="pip" data-pip="0"></span>
+            <span class="pip" data-pip="1"></span>
+            <span class="pip" data-pip="2"></span>
+            <span class="pip" data-pip="3"></span>
+            <span class="pip" data-pip="4"></span>
+          </div>
+        </div>
+        <div class="zone-label" id="roleLabelA">Electric Cyan &bull; Left Goal</div>
       </div>
 
+      <!-- Center HUD: Status & The Quad-Potentiometer Control Panel -->
       <div class="hud-center">
+        <!-- Live System & Challenge Status Banner -->
         <div class="mode-display">
-          <span class="mode-label">Active Mode</span>
-          <h2 class="mode-title" id="modeTitle">Breathing / Pulse</h2>
+          <div class="status-callout" id="statusCallout">
+            <span class="callout-pill" id="calloutPill">AMBIENT MODE</span>
+            <span class="callout-text" id="calloutText">Bar counter is running ambient relaxation lighting.</span>
+          </div>
+          <div class="mode-titles-row">
+            <div class="title-column">
+              <span class="mode-label">Pot A4: Light Behavior</span>
+              <h2 class="mode-title" id="modeTitle">Breathing / Pulse</h2>
+            </div>
+            <div class="divider-v"></div>
+            <div class="title-column">
+              <span class="mode-label">Pot A1: Game Selection</span>
+              <h2 class="game-title" id="gameTitle">Resonance Pulse</h2>
+            </div>
+          </div>
         </div>
+
+        <!-- Primary Action Triggers -->
         <div class="competition-controls">
-          <button class="control-btn" id="btnToggleMode" type="button">Toggle Mode [M]</button>
-          <button class="control-btn highlight-btn" id="btnToggleGame" type="button">Start Game [G]</button>
-          <button class="control-btn" id="btnStepColor" type="button">Cycle Color [C]</button>
-          <button class="control-btn" id="btnStepBrightness" type="button">Dim / Brighten [B]</button>
+          <button class="control-btn highlight-btn" id="btnToggleGame" type="button">Challenge / Start Game [G]</button>
+          <button class="control-btn" id="btnCycleMode" type="button">Cycle Light Mode [M]</button>
+          <button class="control-btn" id="btnCycleGame" type="button">Cycle Game [K]</button>
         </div>
+
+        <!-- The 4 Rotary Potentiometer Knobs (A1, A2, A3, A4) -->
         <div class="rotary-controls-grid">
+          <!-- Pot A4: Ambient Light Behavior Knob -->
           <div class="rotary-control">
             <div class="rotary-label-row">
-              <span class="rotary-label">Mood Color (Rotary A3):</span>
+              <span class="rotary-label">Light Behavior (Pot A4):</span>
+              <span class="rotary-val-text" id="lightKnobText">Mode 1: Breathing</span>
+            </div>
+            <input type="range" id="lightKnobSlider" class="knob-slider" min="0" max="5" value="0" step="1">
+            <div class="ticks-row">
+              <span>Pulse</span><span>Twinkle</span><span>Flame</span><span>Comet</span><span>Scanner</span><span>Wipe</span>
+            </div>
+          </div>
+
+          <!-- Pot A1: Game Selection Knob -->
+          <div class="rotary-control">
+            <div class="rotary-label-row">
+              <span class="rotary-label">Game Selection (Pot A1):</span>
+              <span class="rotary-val-text" id="gameKnobText">Game 1: Resonance</span>
+            </div>
+            <input type="range" id="gameKnobSlider" class="knob-slider" min="0" max="5" value="0" step="1">
+            <div class="ticks-row">
+              <span>Resonance</span><span>Nova</span><span>Tug</span><span>Meteor</span><span>Clash</span><span>Paint</span>
+            </div>
+          </div>
+
+          <!-- Pot A3: Mood Color / Rainbow Spectrum Knob -->
+          <div class="rotary-control">
+            <div class="rotary-label-row">
+              <span class="rotary-label">Mood Color (Pot A3):</span>
               <span class="color-preview" id="colorPreview"></span>
               <span class="hue-value" id="hueValue">0° (Red)</span>
             </div>
             <input type="range" id="hueSlider" class="rainbow-slider" min="0" max="375" value="0">
+            <div class="ticks-row">
+              <span>0°</span><span>90°</span><span>180°</span><span>270°</span><span>360°</span><span>White</span>
+            </div>
           </div>
+
+          <!-- Pot A2: Master Brightness Knob -->
           <div class="rotary-control">
             <div class="rotary-label-row">
-              <span class="rotary-label">Brightness (Rotary A2):</span>
+              <span class="rotary-label">Master Brightness (Pot A2):</span>
               <span class="brightness-value" id="brightnessValue">100% (255)</span>
             </div>
             <input type="range" id="brightnessSlider" class="brightness-slider" min="0" max="255" value="255">
+            <div class="ticks-row">
+              <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
+            </div>
           </div>
         </div>
+
         <div class="game-instruction" id="gameInstruction">
-          Double-click or press [G] to start competitive match!
+          Press Player A [A] or Player B [L] to challenge opponent! Opponent's dedicated LED blinks 10x to summon them.
         </div>
       </div>
 
+      <!-- Player Station B (Right End) -->
       <div class="player-panel player-2">
         <div class="player-header">
-          <span class="player-tag">Player 2 (Right)</span>
+          <div>
+            <span class="player-tag" id="tagPlayerB">Player Station B</span>
+            <div class="pin-subtext">Pin 4 (Button) &bull; Pin 5 (LED)</div>
+          </div>
           <span class="key-hint">Press [L]</span>
         </div>
-        <button class="arcade-btn btn-p2" id="btnP2" type="button">P2 BUTTON</button>
-        <div class="zone-label">Amber / Red Forge</div>
+
+        <!-- Dedicated Hardware Station: LED + Button -->
+        <div class="station-hardware">
+          <div class="dedicated-led-pod">
+            <span class="pod-label">LED (Pin 5)</span>
+            <div class="hardware-led" id="ledStationB" title="Dedicated SK6812 LED for Gamer B on Pin 5">
+              <div class="led-die" id="ledDieB"></div>
+            </div>
+          </div>
+          <button class="arcade-btn btn-p2" id="btnP2" type="button">
+            <span class="btn-text">BUTTON B</span>
+            <span class="btn-subtext">Right Station</span>
+          </button>
+        </div>
+
+        <!-- Live 5-Point Strip-End Score Pips (LEDs 719..715) -->
+        <div class="score-pips-container">
+          <span class="pips-label">Score (Strip LEDs 719..715):</span>
+          <div class="score-pips" id="pipsB">
+            <span class="pip" data-pip="0"></span>
+            <span class="pip" data-pip="1"></span>
+            <span class="pip" data-pip="2"></span>
+            <span class="pip" data-pip="3"></span>
+            <span class="pip" data-pip="4"></span>
+          </div>
+        </div>
+        <div class="zone-label" id="roleLabelB">Neon Coral Red &bull; Right Goal</div>
       </div>
     </section>
 
@@ -111,7 +239,7 @@
       <div class="setting-group">
         <label for="diffuserSelect">Optics & Diffuser:</label>
         <select id="diffuserSelect">
-          <option value="acrylic">Milky Acrylic Channel (Realistic)</option>
+          <option value="acrylic">Milky Acrylic Channel (Realistic 12m)</option>
           <option value="silicone">Silicone Tube Dome</option>
           <option value="none">Bare 5050 LEDs (Direct Die)</option>
         </select>
@@ -133,8 +261,7 @@
 
       <div class="setting-group">
         <span class="dev-note">
-          <strong>Backend:</strong>
-          Implementation A (Serial) &bull; Production: Implementation B (Adafruit_NeoPixel)
+          <strong>Hardware Backend:</strong> FastLED SK6812 (720 LEDs) &bull; Pin 2/3 (Station A) &bull; Pin 4/5 (Station B) &bull; Pin 6 (Strip)
         </span>
       </div>
     </footer>
@@ -143,4 +270,3 @@
   <script src="app.js"></script>
 </body>
 </html>
-

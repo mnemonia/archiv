@@ -1,5 +1,5 @@
 /* ============================================================================
-   Virtual NeoPixel Strip (60 LEDs/m) - Stylesheet
+   Virtual NeoPixel Strip (12m / 720 LEDs) - Stylesheet
    ============================================================================ */
 
 :root {
@@ -32,13 +32,13 @@ body {
 }
 
 .app-container {
-  max-width: 1360px;
+  max-width: 1400px;
   width: 100%;
   margin: 0 auto;
-  padding: 20px 24px;
+  padding: 18px 24px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
 /* --- Header / Status Bar --- */
@@ -46,7 +46,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px 20px;
+  padding: 12px 20px;
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
   border-radius: 12px;
@@ -55,7 +55,7 @@ body {
 .logo-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
 }
 
 .status-indicator {
@@ -79,18 +79,21 @@ h1 {
 }
 
 .badge {
-  font-size: 0.75rem;
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 0.72rem;
   background: #21262d;
   border: 1px solid #30363d;
   color: var(--accent-cyan);
-  padding: 4px 10px;
-  border-radius: 20px;
+  padding: 2px 8px;
+  border-radius: 12px;
   font-weight: 600;
 }
 
 .telemetry {
   display: flex;
   gap: 16px;
+  align-items: center;
 }
 
 .stat-box {
@@ -116,98 +119,153 @@ h1 {
   color: var(--accent-amber);
 }
 
-.threshold-box .stat-value {
-  color: var(--accent-green);
+.state-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #21262d;
+  color: var(--accent-cyan);
+  border: 1px solid var(--border-color);
 }
 
-/* --- Stage: Virtual Shelf & Physical LED Strip --- */
+.score-stat-box .score-value {
+  font-size: 1rem;
+  font-weight: 800;
+  font-family: monospace;
+  color: #facc15;
+}
+
+/* --- Viewport Stage Toolbar --- */
+.stage-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.toolbar-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.view-btn-group {
+  display: flex;
+  gap: 8px;
+}
+
+.view-btn {
+  padding: 5px 12px;
+  background: #21262d;
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.view-btn:hover {
+  background: #30363d;
+}
+
+.view-btn.active {
+  background: #0284c7;
+  border-color: #38bdf8;
+  color: #fff;
+}
+
+.meter-info {
+  font-family: monospace;
+  color: var(--accent-cyan);
+}
+
+/* --- Main Visual Stage: 12-Meter Bar Counter --- */
 .stage-section {
   position: relative;
-  border-radius: 14px;
-  overflow: hidden;
+  background: #05070a;
   border: 1px solid var(--border-color);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7);
 }
 
 .shelf-backdrop {
   position: relative;
   width: 100%;
-  height: 380px;
-  background: radial-gradient(circle at 50% 40%, #1f1a14 0%, #110e0a 70%, #080604 100%);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  transition: background 0.5s ease;
+  height: 280px;
+  background-size: cover;
+  background-position: center;
+  transition: background 0.4s ease;
 }
 
-/* Wall Textures */
 .shelf-backdrop.walnut {
-  background: radial-gradient(circle at 50% 40%, #241c14 0%, #17110c 70%, #0a0806 100%);
+  background-color: #1a120b;
+  background-image: radial-gradient(ellipse at 50% 120%, rgba(60, 42, 28, 0.7), rgba(12, 8, 5, 0.95));
 }
 
 .shelf-backdrop.oak {
-  background: radial-gradient(circle at 50% 40%, #2d2417 0%, #1c170f 70%, #0c0a06 100%);
+  background-color: #2b2118;
+  background-image: radial-gradient(ellipse at 50% 120%, rgba(94, 69, 44, 0.7), rgba(20, 14, 9, 0.95));
 }
 
 .shelf-backdrop.concrete {
-  background: radial-gradient(circle at 50% 40%, #1e232a 0%, #14171c 70%, #0a0c0e 100%);
+  background-color: #1a1f26;
+  background-image: radial-gradient(ellipse at 50% 120%, rgba(51, 65, 85, 0.7), rgba(15, 23, 42, 0.95));
 }
 
-/* Canvas layers */
 #ambientGlowCanvas {
   position: absolute;
-  top: 20px;
+  top: 0;
   left: 0;
   width: 100%;
   height: 280px;
   pointer-events: none;
-  z-index: 1;
+  z-index: 2;
 }
 
 .strip-housing {
-  position: relative;
-  z-index: 2;
-  width: 96%;
-  height: 70px;
-  background: #121316;
-  border: 2px solid #2b2e35;
-  border-radius: 6px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8), inset 0 2px 4px rgba(255, 255, 255, 0.05);
-  display: flex;
-  align-items: center;
-  overflow: hidden;
+  position: absolute;
+  bottom: 80px;
+  left: 0;
+  width: 100%;
+  height: 90px;
+  z-index: 3;
 }
 
 #stripCanvas {
   width: 100%;
-  height: 100%;
+  height: 90px;
   display: block;
 }
 
-/* Optical Diffuser Overlay */
 .diffuser-overlay {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
-  height: 100%;
+  height: 90px;
   pointer-events: none;
-  transition: all 0.3s ease;
+  transition: backdrop-filter 0.3s ease, background 0.3s ease;
 }
 
 .diffuser-overlay.acrylic {
-  background: rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: inset 0 0 16px rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 16px rgba(255, 255, 255, 0.18);
 }
 
 .diffuser-overlay.silicone {
-  background: rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  box-shadow: inset 0 0 24px rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: inset 0 0 24px rgba(255, 255, 255, 0.25);
 }
 
 .diffuser-overlay.none {
@@ -222,8 +280,8 @@ h1 {
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 90px;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.6));
+  height: 85px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.7));
   border-top: 2px solid #3c2f21;
   z-index: 1;
 }
@@ -231,9 +289,9 @@ h1 {
 /* --- Competition HUD --- */
 .game-hud {
   display: grid;
-  grid-template-columns: 240px 1fr 240px;
-  gap: 20px;
-  align-items: center;
+  grid-template-columns: 270px 1fr 270px;
+  gap: 18px;
+  align-items: flex-start;
   padding: 16px 20px;
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
@@ -243,43 +301,116 @@ h1 {
 .player-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
 }
 
 .player-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
 }
 
 .player-tag {
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.95rem;
+}
+
+.pin-subtext {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: monospace;
+  margin-top: 2px;
 }
 
 .player-1 .player-tag { color: var(--accent-cyan); }
-.player-2 .player-tag { color: var(--accent-amber); }
+.player-2 .player-tag { color: #f43f5e; }
 
 .key-hint {
   font-size: 0.75rem;
   color: var(--text-muted);
   font-family: monospace;
+  background: #21262d;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #30363d;
+}
+
+/* --- Dedicated Hardware Station (LED + Button) --- */
+.station-hardware {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dedicated-led-pod {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.pod-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.hardware-led {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #2a2e39 0%, #111317 75%, #050608 100%);
+  border: 3px solid #3c4453;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.8), 0 2px 6px rgba(0,0,0,0.5);
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.led-die {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background-color: #000;
+  transition: all 0.08s ease;
 }
 
 .arcade-btn {
-  padding: 18px 20px;
-  font-size: 1rem;
+  flex: 1;
+  padding: 14px 12px;
+  font-size: 0.95rem;
   font-weight: 800;
   letter-spacing: 0.05em;
   border-radius: 8px;
   border: none;
   cursor: pointer;
   transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.4);
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.4);
+  text-align: center;
+}
+
+.arcade-btn .btn-text {
+  display: block;
+}
+
+.arcade-btn .btn-subtext {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 500;
+  opacity: 0.8;
+  margin-top: 2px;
 }
 
 .arcade-btn:active, .arcade-btn.pressed {
-  transform: translateY(4px);
+  transform: translateY(3px);
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
 }
 
@@ -294,52 +425,172 @@ h1 {
 }
 
 .btn-p2 {
-  background: linear-gradient(135deg, #d97706, #b45309);
+  background: linear-gradient(135deg, #e11d48, #be123c);
   color: #fff;
-  border-top: 1px solid #fde68a;
+  border-top: 1px solid #fecdd3;
 }
 
 .btn-p2:active, .btn-p2.pressed {
-  background: #d97706;
+  background: #e11d48;
+}
+
+/* --- Score Pips Container --- */
+.score-pips-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pips-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.score-pips {
+  display: flex;
+  gap: 6px;
+}
+
+.pip {
+  flex: 1;
+  height: 9px;
+  border-radius: 3px;
+  background: #21262d;
+  border: 1px solid #30363d;
+  transition: all 0.2s ease;
+}
+
+.pip.active-a {
+  background: #00b4ff;
+  border-color: #7dd3fc;
+  box-shadow: 0 0 8px rgba(0, 180, 255, 0.8);
+}
+
+.pip.active-b {
+  background: #ff1e46;
+  border-color: #fca5a5;
+  box-shadow: 0 0 8px rgba(255, 30, 70, 0.8);
+}
+
+.pip.active-robot {
+  background: #ffaa00;
+  border-color: #fde047;
+  box-shadow: 0 0 8px rgba(255, 170, 0, 0.8);
 }
 
 .zone-label {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
   text-align: center;
 }
 
+/* --- Center HUD --- */
 .hud-center {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
-.mode-display {
+/* Status Callout Banner */
+.status-callout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  margin-bottom: 8px;
+  width: 100%;
+  justify-content: center;
+}
+
+.callout-pill {
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+  background: #1e3a8a;
+  color: #93c5fd;
+  border: 1px solid #3b82f6;
+}
+
+.callout-pill.challenge {
+  background: #831843;
+  color: #fbcfe8;
+  border-color: #ec4899;
+}
+
+.callout-pill.playing {
+  background: #064e3b;
+  color: #6ee7b7;
+  border-color: #10b981;
+}
+
+.callout-pill.victory {
+  background: #78350f;
+  color: #fde68a;
+  border-color: #f59e0b;
+}
+
+.callout-text {
+  font-size: 0.82rem;
+  color: var(--text-main);
+  font-weight: 500;
+}
+
+.mode-titles-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 4px;
+  width: 100%;
+}
+
+.title-column {
   text-align: center;
 }
 
 .mode-label {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--text-muted);
   text-transform: uppercase;
 }
 
 .mode-title {
-  font-size: 1.4rem;
+  font-size: 1.15rem;
   font-weight: 800;
   color: #fff;
 }
 
+.game-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--accent-amber);
+}
+
+.divider-v {
+  width: 1px;
+  height: 34px;
+  background: var(--border-color);
+}
+
 .competition-controls {
   display: flex;
-  gap: 12px;
+  gap: 10px;
 }
 
 .control-btn {
-  padding: 8px 16px;
-  font-size: 0.85rem;
+  padding: 8px 14px;
+  font-size: 0.82rem;
   font-weight: 600;
   background: #21262d;
   color: var(--text-main);
@@ -362,32 +613,27 @@ h1 {
   background: #2ea043;
 }
 
-.control-btn.highlight-btn.active-game {
-  background: #da3633;
-  border-color: #f85149;
-}
-
 .game-instruction {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
+  text-align: center;
   font-style: italic;
 }
 
-/* --- Rotary Knobs (Color & Brightness) --- */
+/* --- The Quad-Potentiometer Control Panel --- */
 .rotary-controls-grid {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
   width: 100%;
 }
 
 .rotary-control {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  background: rgba(0, 0, 0, 0.28);
-  padding: 8px 14px;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid var(--border-color);
 }
@@ -395,25 +641,70 @@ h1 {
 .rotary-label-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 0.8rem;
+  justify-content: space-between;
+  font-size: 0.78rem;
   color: var(--text-muted);
 }
 
 .rotary-label {
-  font-weight: 500;
+  font-weight: 600;
+}
+
+.rotary-val-text {
+  font-weight: 700;
+  color: var(--text-main);
+  font-family: monospace;
+}
+
+.knob-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 7px;
+  border-radius: 4px;
+  background: #21262d;
+  border: 1px solid var(--border-color);
+  outline: none;
+  cursor: pointer;
+}
+
+.knob-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #38bdf8;
+  border: 2px solid #fff;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+}
+
+.knob-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #38bdf8;
+  border: 2px solid #fff;
+  cursor: pointer;
+}
+
+.ticks-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  padding: 0 2px;
 }
 
 .color-preview {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   background: #ff0000;
   border: 1px solid rgba(255, 255, 255, 0.4);
   box-shadow: 0 0 8px rgba(255, 0, 0, 0.6);
   display: inline-block;
-  transition: background 0.1s ease, box-shadow 0.1s ease;
 }
 
 .hue-value {
@@ -426,7 +717,7 @@ h1 {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 8px;
+  height: 7px;
   border-radius: 4px;
   background: linear-gradient(to right, #ff0000 0%, #ffff00 16%, #00ff00 32%, #00ffff 48%, #0000ff 64%, #ff00ff 80%, #ff0000 96%, #ffffff 97%, #ffffff 100%);
   outline: none;
@@ -452,7 +743,6 @@ h1 {
   background: #ffffff;
   border: 2px solid #111;
   cursor: pointer;
-  box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
 }
 
 .brightness-value {
@@ -465,7 +755,7 @@ h1 {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 8px;
+  height: 7px;
   border-radius: 4px;
   background: linear-gradient(to right, #111317 0%, #4b5563 50%, #f3f4f6 100%);
   outline: none;
@@ -491,16 +781,15 @@ h1 {
   background: #ffffff;
   border: 2px solid #111;
   cursor: pointer;
-  box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
 }
 
 /* --- Footer Settings --- */
 .footer-settings {
   display: flex;
   flex-wrap: wrap;
-  gap: 24px;
+  gap: 20px;
   align-items: center;
-  padding: 14px 20px;
+  padding: 12px 18px;
   background: var(--bg-panel);
   border: 1px solid var(--border-color);
   border-radius: 12px;
@@ -509,8 +798,8 @@ h1 {
 .setting-group {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 0.85rem;
+  gap: 8px;
+  font-size: 0.82rem;
 }
 
 .setting-group label {
@@ -518,7 +807,7 @@ h1 {
 }
 
 select {
-  padding: 6px 12px;
+  padding: 5px 10px;
   background: #21262d;
   color: var(--text-main);
   border: 1px solid var(--border-color);
@@ -531,11 +820,10 @@ input[type="range"] {
 }
 
 .dev-note {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
 }
 
 .dev-note strong {
   color: var(--accent-cyan);
 }
-
