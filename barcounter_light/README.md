@@ -1,27 +1,31 @@
-# BarCounter Light & Interactive Game System
+# BarCounter Light & Interactive Game System (12m SK6812 Strip)
 
-An Arduino-driven ambient lighting and competitive 2-player arcade gaming system for bar counter tops. Designed for **60 NeoPixel RGB LEDs / 1 meter** (configurable), powered by an **ATmega328P** (Arduino Uno / Nano) with dual-backend support (physical NeoPixel strip or serial stream to a virtual visualizer).
+An Arduino-driven ambient lighting and competitive 2-player arcade gaming system for bar counter tops. Designed for a **12-meter SK6812 RGB LED strip (60 LEDs/m = 720 addressable LEDs)**, driven by the **FastLED** library, featuring independent ambient lighting controllers, extracted 2-player competitive arcade games, and a quad-potentiometer control panel for real-time behavior, game, color, and brightness tuning.
 
 ---
 
 ## 1. System Overview & Core Capabilities
 
-* **Ambient Illumination**: 6 ultra-smooth, slow, non-hectic ambient lighting modes engineered specifically for bar and lounge atmospheres.
-* **Instant Competitive Gaming**: 6 fast, reflex-driven 2-player 1-button arcade games—one corresponding to each ambient mode—activated instantly by holding both player buttons.
-* **Global Rotary Color Knob (Pin A3)**:
-  * Full 360° rainbow spectrum ($0\text{--}65535$ hue) mapped across $0\text{--}1010$ ADC counts.
-  * **White Zone** added at the end of knob travel ($1012\text{--}1023$ counts).
-  * **Constant Perceptual Brightness**: Employs RMS perceptual luminance normalization ($P = \sqrt{0.299R^2 + 0.587G^2 + 0.114B^2} \approx 85.8$) across all hues and white. Turning the color knob never alters overall strip brightness!
-* **Global Rotary Brightness Knob (Pin A2)**:
-  * Master brightness knob governing global strip luminosity ($0\%\text{--}100\%$).
-  * Lossless software scaling in `.show()` prevents color ratio distortion and integer overflow.
-* **Hardware Cross-Talk Lockout**:
-  * Switching ADC channels discards initial conversion with settling delays.
-  * Adjusting the brightness knob dynamically widens the color knob's deadband (from 8 to 24 counts for 400 ms) to suppress power rail sag and eliminate crosstalk between adjacent analog pins.
-* **Minimum Illumination Threshold**:
-  * Automatic luminance enforcement (`MIN_LUMEN_THRESHOLD = 88`, $\approx 34.5\%$ perceptual luminance) prevents animations from falling into total darkness.
-* **Dual-Backend Support**:
-  * Compile-time switch between physical WS2812B / SK6812 strip (`BACKEND_ADAFRUIT_REAL`) and high-speed binary serial streaming (`BACKEND_VIRTUAL_SERIAL`) to a Linux visualizer.
+* **Lighting Hardware**: 12-meter SK6812 RGB LED strip with 720 individually addressable LEDs (GRB color ordering).
+* **LED Driver Framework**: Powered by **FastLED** (`#include <FastLED.h>`) with temporal dithering disabled (`FastLED.setDither(0)`) for flicker-free output.
+* **Separation of Light & Game Engines**:
+  * 6 standalone ambient lighting mode classes designed for relaxed bar atmospheres.
+  * 6 standalone competitive 2-player arcade game classes with scaled physics for 12-meter counter tops.
+* **Rotary Global Light Behavior Knob (Pin A4)**:
+  * Dedicated analog potentiometer mapped across 6 equal dial zones ($0\text{--}1023$ ADC counts).
+  * Selects the active ambient lighting mode directly via potentiometer rotation.
+* **Rotary Game Selection Knob (Pin A1)**:
+  * Dedicated analog potentiometer mapped across 6 equal dial zones ($0\text{--}1023$ ADC counts).
+  * Selects which competitive 2-player game is active in real time with hysteresis filtering.
+* **Rotary Master Brightness Knob (Pin A2)**:
+  * Governs global strip luminosity ($0\%\text{--}100\%$) across **all** light and game modes.
+* **Rotary Mood / Base-Color Knob (Pin A3)**:
+  * Full 360° rainbow spectrum ($0\text{--}65535$ hue across $0\text{--}1010$ ADC counts) plus pure White ($1012\text{--}1023$).
+  * Constant perceptual brightness normalization ($P = \sqrt{0.299R^2 + 0.587G^2 + 0.114B^2} \approx 85.8$) ensures adjusting color has **zero** effect on overall room luminosity.
+* **Physical Action Buttons & Game Activation**:
+  * Player 1 Button (Pin 2) & Player 2 Button (Pin 4).
+  * **Dual Button Hold (Pins 2 & 4 for 800 ms)**: Toggles Game Mode on/off. When launched, it runs the game dialed on the Game Potentiometer (Pin A1).
+  * Turning the Global Light Behavior Knob (Pin A4) while in Game Mode gracefully exits back to ambient lighting.
 
 ---
 
@@ -31,15 +35,16 @@ An Arduino-driven ambient lighting and competitive 2-player arcade gaming system
 
 | Arduino Pin | Peripheral | Connection Details | Purpose |
 | :--- | :--- | :--- | :--- |
-| **`Digital Pin 6`** | **NeoPixel Strip (DIN)** | Data IN via $330\text{--}470\,\Omega$ series resistor | High-speed 800 kHz NeoPixel signal output |
+| **`Digital Pin 6`** | **SK6812 Strip (DIN)** | Data IN via $330\text{--}470\,\Omega$ series resistor | FastLED SK6812 800 kHz signal output |
 | **`Digital Pin 2`** | **Player 1 Button (P1)** | Momentary push button to GND (`INPUT_PULLUP`) | P1 action input (Left side / Blue) |
 | **`Digital Pin 4`** | **Player 2 Button (P2)** | Momentary push button to GND (`INPUT_PULLUP`) | P2 action input (Right side / Red) |
-| **`Digital Pin 7`** | **Mode Button** | Momentary push button to GND (`INPUT_PULLUP`) | Cycles through the 6 ambient modes |
+| **`Analog Pin A1`** | **Game Selection Pot** | 10k potentiometer wiper (center pin) | Selects active 2-player arcade game |
 | **`Analog Pin A2`** | **Brightness Pot** | 10k potentiometer wiper (center pin) | Master luminosity ($0\%\text{--}100\%$) |
-| **`Analog Pin A3`** | **Color Pot** | 10k potentiometer wiper (center pin) | Mood / base-color selection & white |
+| **`Analog Pin A3`** | **Color / Mood Pot** | 10k potentiometer wiper (center pin) | Mood / base-color selection & white |
+| **`Analog Pin A4`** | **Light Behavior Pot** | 10k potentiometer wiper (center pin) | Selects active ambient lighting mode |
 | **`Analog Pin A0`** | **Unconnected** | Left floating | Hardware entropy source for `randomSeed()` |
-| **`5V`** | **Power Rail** | Strip VDD, Potentiometer Outer Pin 1 | 5V DC regulated power |
-| **`GND`** | **Ground Rail** | Strip GND, Button terminals, Potentiometer Outer Pin 2 | Common system ground |
+| **`5V`** | **Power Supply** | Strip 5V VDD, Potentiometer Outer Pin 1 | 5V DC regulated power |
+| **`GND`** | **Common Ground** | Strip GND, Button terminals, Potentiometer Outer Pin 2 | Common system ground |
 
 ---
 
@@ -47,37 +52,41 @@ An Arduino-driven ambient lighting and competitive 2-player arcade gaming system
 
 ```text
                      +-----------------------+
-                     |      Arduino Uno/     |
-                     |      Nano (ATmega)    |
+                     |        Arduino        |
                      |                       |
-                     |                   D6  |-----[ 330-470 Ohm ]-----> NeoPixel DIN
+                     |                   D6  |-----[ 330-470 Ohm ]-----> SK6812 Data IN
                      |                       |
        +5V <---------| 5V                 D2 |-----------+  (Player 1 Button)
        GND <---------| GND                D4 |-------+   |  (Player 2 Button)
-                     |                    D7 |---+   |   |  (Mode Toggle Button)
-                     |                       |   |   |   |
-                     |                   A2  |<--+---+---+---+ (Brightness Pot Wiper)
-                     |                   A3  |<--+---+---+---+-+ (Color Pot Wiper)
-                     +-----------------------+   |   |   |   | |
-                                                 |   |   |   | |
-     Mode Button (Pin 7)                         |   |   |   | |
-     [ Push Button ] ----------------------------+   |   |   | |
-     Other Terminal ---> GND                         |   |   | |
-                                                     |   |   | |
-     Player 2 Button (Pin 4)                         |   |   | |
-     [ Push Button ] --------------------------------+   |   | |
-     Other Terminal ---> GND                             |   | |
-                                                         |   | |
-     Player 1 Button (Pin 2)                             |   | |
-     [ Push Button ] ------------------------------------+   | |
-     Other Terminal ---> GND                                 | |
-                                                             | |
-     Master Brightness Pot (10k Linear)                      | |
-     +5V ---[ O ]--- Wiper ----------------------------------+ |
-     GND ---[ O ]                                              |
-                                                               |
-     Color / Mood Selection Pot (10k Linear)                   |
-     +5V ---[ O ]--- Wiper ------------------------------------+
+                     |                       |       |   |
+                     |                   A1  |<--+---+---+---+ (Game Selection Pot Wiper)
+                     |                   A2  |<--+---+---+---+-+ (Brightness Pot Wiper)
+                     |                   A3  |<--+---+---+---+-+-+ (Color Pot Wiper)
+                     |                   A4  |<--+---+---+---+-+-+-+ (Light Behavior Pot Wiper)
+                     +-----------------------+   |   |   |   | | | |
+                                                 |   |   |   | | | |
+     Player 2 Button (Pin 4)                     |   |   |   | | | |
+     [ Push Button ] ----------------------------+   |   |   | | | |
+     Other Terminal ---> GND                         |   |   | | | |
+                                                     |   |   | | | |
+     Player 1 Button (Pin 2)                         |   |   | | | |
+     [ Push Button ] --------------------------------+   |   | | | |
+     Other Terminal ---> GND                             |   | | | |
+                                                         |   | | | |
+     Game Selection Pot (10k Linear)                     |   | | | |
+     +5V ---[ O ]--- Wiper ------------------------------+   | | | |
+     GND ---[ O ]                                            | | | |
+                                                             | | | |
+     Master Brightness Pot (10k Linear)                      | | | |
+     +5V ---[ O ]--- Wiper ----------------------------------+ | | |
+     GND ---[ O ]                                              | | |
+                                                               | | |
+     Color / Mood Selection Pot (10k Linear)                   | | |
+     +5V ---[ O ]--- Wiper ------------------------------------+ | |
+     GND ---[ O ]                                                | |
+                                                                 | |
+     Global Light Behavior Pot (10k Linear)                      | |
+     +5V ---[ O ]--- Wiper --------------------------------------+ |
      GND ---[ O ]
 ```
 
@@ -85,162 +94,172 @@ An Arduino-driven ambient lighting and competitive 2-player arcade gaming system
 
 ## 3. Physical Controls & Interaction
 
-### Mode Toggle Button (Pin 7)
-* **Single Tap**: Steps sequentially through all 6 ambient modes:
-  `Breathing/Pulse` $\to$ `Twinkle/Sparkle` $\to$ `Fire/Flame` $\to$ `Comet/Meteor` $\to$ `Scanner/Cylon` $\to$ `Color Wipe` $\to$ *(repeats)*.
-* Exits any active game and returns to ambient lighting.
+### Rotary Global Light Behavior Potentiometer (Pin A4)
+Turning the knob on **Pin A4** directly selects the active ambient lighting mode across 6 equal dial zones:
+
+| Dial Zone | ADC Range | Ambient Mode | Visual Character |
+| :---: | :---: | :--- | :--- |
+| **Zone 0** | $0 \dots 170$ | **Mode 1: Breathing / Pulse** | 7.5s Meditative sinusoidal breath in mood color |
+| **Zone 1** | $171 \dots 341$ | **Mode 2: Twinkle / Sparkle** | Drifting candlelight and starry shimmer with white peak glints |
+| **Zone 2** | $342 \dots 511$ | **Mode 3: Fire / Flame** | Cozy hearth fire with convective cooling and thermal diffusion |
+| **Zone 3** | $512 \dots 682$ | **Mode 4: Comet / Meteor** | Gentle shooting star gliding along a low-luminance baseline floor |
+| **Zone 4** | $683 \dots 852$ | **Mode 5: Scanner / Cylon** | Fluid 6.0s Larson scanner eye with soft Gaussian halo |
+| **Zone 5** | $853 \dots 1023$ | **Mode 6: Color Wipe** | Progressive chromatic roll cycling harmonic color offsets |
+
+*Turning this knob while in Game Mode automatically exits Game Mode and transitions to the dialed ambient mode.*
+
+---
+
+### Rotary Game Selection Potentiometer (Pin A1)
+Turning the knob on **Pin A1** selects which competitive game is launched across 6 equal dial zones:
+
+| Dial Zone | ADC Range | Selected Game | Genre / Mechanics |
+| :---: | :---: | :--- | :--- |
+| **Zone 0** | $0 \dots 170$ | **Game 1: Resonance Pulse** | Rhythm Wave Tug-of-War ($\ge 88\%$ resonance timing) |
+| **Zone 1** | $171 \dots 341$ | **Game 2: Sparkle Rush** | High-Velocity Nova Deflector & Precision Shield |
+| **Zone 2** | $342 \dots 511$ | **Game 3: Flame Tug** | Bellows Forge Combustion Clash (Rapid Button Mashing) |
+| **Zone 3** | $512 \dots 682$ | **Game 4: Meteor Deflector** | Orbital Comet Pong Rally with Speed Acceleration |
+| **Zone 4** | $683 \dots 852$ | **Game 5: Cylon Clash** | Hyper-Pong Beam Duel (High-Speed Larson Puck) |
+| **Zone 5** | $853 \dots 1023$ | **Game 6: Territory Paint** | Rapid Wipe Wars (Paint Territory Capture) |
+
+*Features a deadband filter with ADC sample pre-charging to eliminate jitter between game slots.*
+
+---
 
 ### Entering & Exiting 2-Player Game Mode
 * **Dual Button Hold**: **Press and hold both Player 1 (Pin 2) and Player 2 (Pin 4) buttons simultaneously for 800 ms**.
-* Instantly launches the dedicated competitive game corresponding to the currently selected mode.
-* Holding both buttons again for 800 ms returns to peaceful ambient lighting.
-
-### Rotary Color Potentiometer (Pin A3)
-* **0 to 1010 counts ($0^\circ\text{--}350^\circ$) — 360° Rainbow**:
-  Full 16-bit hue range ($0\text{--}65535$). Sweeps through Red, Yellow, Green, Cyan, Blue, Magenta, and back to Red.
-* **1012 to 1023 counts ($350^\circ\text{--}360^\circ$) — Pure White Zone**:
-  Hysteresis-protected pure neutral white (`ENTER > 1015`, `EXIT < 1005`).
-* **Universal Mood Anchor**: Dynamically defines the base color tint for all ambient modes!
-
-### Rotary Brightness Potentiometer (Pin A2)
-* Governs overall strip output from total black ($0$) to full brilliance ($255$).
-* Scaled losslessly across the RGB color components at output time, preserving subtle hue balances.
+  * Instantly launches the game dialed on the **Game Selection Knob (A1)**.
+  * Holding both buttons again for 800 ms exits back to ambient lighting.
+* **Knob Override**: Turning the **Global Light Behavior Knob (A4)** while playing a game immediately exits Game Mode and restores ambient lighting.
 
 ---
 
-## 4. The 6 Ambient Visualization Modes
+### Rotary Color & Mood Potentiometer (Pin A3)
+* **$0^\circ \text{ to } 350^\circ$ ($0\text{--}1010$ ADC counts)**: Full $360^\circ$ chromatic rainbow.
+* **$350^\circ \text{ to } 360^\circ$ ($1012\text{--}1023$ ADC counts)**: Pure neutral white zone with hysteresis.
+* **Universal Mood Anchor**: Dynamically tints the base visual palette for all ambient modes and game background floors without changing luminance.
 
-Every ambient mode is intentionally tuned for bar atmospheres: ultra-slow, meditative, and organic without harsh strobing or hectic jumping.
+---
 
-| Mode # | Mode Name | Period / FPS | Ambient Behavior | Mood-Color Influence |
+### Rotary Master Brightness Potentiometer (Pin A2)
+* Adjusts global strip luminosity from complete darkness ($0$) to full brilliance ($255$) across both ambient modes and games.
+
+---
+
+## 4. The 6 Ambient Lighting Modes
+
+Separated from game logic into modular, dedicated classes:
+
+| Mode # | Mode Class | Period / Interval | Visual Behavior | Mood Color Influence |
 | :---: | :--- | :---: | :--- | :--- |
-| **1** | **Breathing / Pulse** | 7.5 s cycle / 40 FPS | Meditative full-strip sinusoidal breath between 42% and 82% luminance | Pulses in the exact rotary base color |
-| **2** | **Twinkle / Sparkle** | 50 ms step / 20 FPS | Drifting candlelight and starry shimmer with subtle white glints on peaks | All sparkles tinted by the rotary base color |
-| **3** | **Fire / Flame** | 60 ms step / 16 FPS | Cozy hearth fire with convective cooling, thermal heat transfer, and embers | Heat spectrum rendered in rotary flame tint |
-| **4** | **Comet / Meteor** | 45 ms step / 22 FPS | Gentle shooting star gliding along a low-luminance baseline floor | Comet head and fading tail follow rotary color |
-| **5** | **Scanner / Cylon** | 6.0 s sweep / 28 FPS | Fluid Larson scanner with soft Gaussian glow falloff | Scanning eye and halo rendered in rotary color |
-| **6** | **Color Wipe** | 180 ms/LED / 5.5 FPS | Progressive chromatic roll cycling harmonic color offsets | Starts from rotary color (or 4 white CCT tints) |
+| **1** | `BreathingPulseLight` | 7.5 s sine cycle / 40 FPS | Meditative full-counter breathing wave between 42% and 82% brightness | Pulses in rotary base color |
+| **2** | `TwinkleSparkleLight` | 50 ms step / 20 FPS | Drifting candlelight and starry shimmer with brilliant white glints | All sparkles tinted in rotary color |
+| **3** | `FireFlameLight` | 60 ms step / 16 FPS | Cozy hearth fire with convective cooling, thermal heat transfer, and embers | Heat ramp rendered in flame tint |
+| **4** | `CometMeteorLight` | 40 ms step / 25 FPS | Gentle shooting star gliding across 12 meters with 20% fading tail | Comet and floor follow rotary color |
+| **5** | `CylonScannerLight` | 6.0 s sweep / 28 FPS | Smooth Larson scanner eye with soft Gaussian halo across 12 meters | Scanner rendered in rotary color |
+| **6** | `ColorWipeLight` | Progressive / ~10 s wipe | Chromatic progressive wipe cycling 4 harmonic color angles (or 4 white CCTs) | Anchored on rotary base color |
 
 ---
 
-## 5. The 6 Competitive 2-Player Games
+## 5. The 6 Competitive 2-Player Arcade Games
 
-Each ambient mode has its own custom-tailored 2-player reflex duel. Player 1 (Left / Blue) battles Player 2 (Right / Red).
+Separated from lighting modes into independent game engines. Player 1 (Left / Blue, Pin 2) battles Player 2 (Right / Red, Pin 4) across the 12-meter bar counter (720 LEDs):
 
 ```text
-Player 1 (Left)                                        Player 2 (Right)
-  [ Pin 2 ]                                               [ Pin 4 ]
-    Blue    =================== BATTLEFIELD ===================    Red
-    Goal                                                          Goal
+Player 1 (Left End, Pin 2)                          Player 2 (Right End, Pin 4)
+  [ Blue Base ] ================= 12 METERS (720 LEDs) ================= [ Red Base ]
 ```
 
 ---
 
 ### Game 1: "Resonance Pulse" (Rhythm Wave Tug-of-War)
-* **Parent Mode**: Breathing / Pulse
-* **Visuals**: A glowing energy nexus floats between Player 1's Blue territory and Player 2's Red territory, surrounded by an ambient breathing field.
-* **Game Mechanics**:
-  * The bar's ambient breath wave continues to oscillate smoothly.
-  * **The Resonance Window**: When the breath wave crests near its peak amplitude ($\text{wave} \ge 88\%$), the system enters **Resonance** and the nexus turns dazzling white-hot.
-  * **Rhythm Precision**: Press your button *only* while the nexus is in Resonance to push the nexus toward your opponent's goal!
-  * **Cooldown Penalty**: Pressing outside of Resonance misfires your pulse, locking your button in a **400 ms penalty cooldown**.
-* **Victory Condition**: Pushing the nexus into the opponent's outer boundary wins the round. After 2 seconds, the board automatically resets.
+* **Dial Zone**: Zone 0 (ADC $0\text{--}170$)
+* **Mechanics**:
+  * An oscillating energy nexus floats between Player 1's Blue territory and Player 2's Red territory.
+  * **The Resonance Window**: When the ambient breath wave reaches peak amplitude ($\ge 88\%$), the nexus turns dazzling white.
+  * **Timing**: Press your button *only* during Resonance to push the nexus toward your opponent's goal (48 LEDs per pulse).
+  * **Penalty**: Pressing outside Resonance triggers a **400 ms misfire penalty cooldown**.
+* **Win Condition**: Pushing the nexus into the opponent's goal wins the round. Automatically resets after 2 seconds.
 
 ---
 
 ### Game 2: "Sparkle Rush" (Nova Sparkle Reflex Deflector)
-* **Parent Mode**: Twinkle / Sparkle
-* **Visuals**: A high-velocity cosmic Nova travels across a twinkling starfield between Player 1's Blue defense shield and Player 2's Magenta defense shield.
-* **Game Mechanics**:
-  * Each player has a defense shield covering $\approx 15\%$ of the strip at their end.
-  * As the Nova enters your defense zone, press your button to deflect it back towards your opponent.
-  * **Edge Acceleration Bonus**: Deflecting the Nova at the very edge of your shield imparts an intense speed multiplier ($+112\%$ speed + up to $1.5\times$ depth bonus), sending it back at blinding speeds!
-  * Early button presses while the Nova is outside your zone are ignored.
-* **Victory Condition**: If the Nova breaches your shield and leaves the strip, the opponent scores the win.
+* **Dial Zone**: Zone 1 (ADC $171\text{--}341$)
+* **Mechanics**:
+  * A high-velocity cosmic Nova travels across a starry background between Player 1's Blue defense shield and Player 2's Magenta defense shield (108 LEDs / $\approx 1.8\text{ meters}$ each).
+  * Press your button while the Nova is inside your shield to deflect it back.
+  * **Edge Bonus**: Deflecting near the outer edge gives up to a $+112\%$ speed boost, accelerating the Nova across the bar.
+* **Win Condition**: If the Nova breaches the defense shield and exits the strip, the opposing player scores the win.
 
 ---
 
 ### Game 3: "Flame Tug" (Bellows Forge Combustion Clash)
-* **Parent Mode**: Fire / Flame
-* **Visuals**: Two opposing forge fires clash in the center. Player 1 powers a Blue Plasma Forge; Player 2 powers a Red Inferno Forge. The collision point glows white-hot.
-* **Game Mechanics**:
-  * A furious, rapid-fire button-mashing tug-of-war!
-  * Each button press pumps your forge's bellows, injecting thermal energy into your side and shifting the white-hot combustion boundary toward your opponent.
-  * Built-in 120 ms anti-spam filtering rewards rapid, rhythmic, deliberate taps over simple jitter-holding.
-* **Victory Condition**: Completely overwhelming the opponent's forge by pushing the molten clash point into their goal claims the victory.
+* **Dial Zone**: Zone 2 (ADC $342\text{--}511$)
+* **Mechanics**:
+  * Rapid-fire button-mashing tug-of-war! Player 1 powers a Blue Plasma Forge; Player 2 powers a Red Inferno Forge.
+  * Each press pumps your forge's bellows, advancing your combustion front by 24 LEDs ($\approx 40\text{ cm}$).
+  * Built-in 120 ms anti-spam filtering rewards rapid, rhythmic, deliberate taps.
+* **Win Condition**: Pushing the white-hot molten collision point into the opponent's forge wins the clash.
 
 ---
 
 ### Game 4: "Meteor Deflector" (High-Speed Comet Rally)
-* **Parent Mode**: Comet / Meteor
-* **Visuals**: A flaming meteor with an incandescent core and trail hurtles back and forth between Player 1's Cyan energy barrier and Player 2's Orange energy barrier.
-* **Game Mechanics**:
-  * An orbital pong rally. Press your button while the meteor traverses your defense sector ($\approx 15\%$ of strip length) to deflect it.
-  * **Kinetic Amplification**: Deflecting deep within your zone accelerates the meteor by $+114\%$ plus an edge-distance velocity bonus, up to terminal velocity.
-* **Victory Condition**: Failing to deflect the meteor lets it crash into your terminal station, giving the win to the opposing player.
+* **Dial Zone**: Zone 3 (ADC $512\text{--}682$)
+* **Mechanics**:
+  * A flaming meteor hurtles between Player 1's Cyan energy barrier and Player 2's Orange energy barrier.
+  * Deflect the incoming meteor while inside your defense sector (108 LEDs).
+  * Timing deep in your zone accelerates the meteor by $+114\%$ plus an edge-distance velocity bonus up to terminal velocity.
+* **Win Condition**: Failing to deflect the meteor lets it crash into your terminal station, awarding the round to your opponent.
 
 ---
 
 ### Game 5: "Cylon Clash" (Hyper-Pong Beam Duel)
-* **Parent Mode**: Scanner / Cylon
-* **Visuals**: A high-energy plasma puck rebounds between Player 1's Blue laser barrier and Player 2's Amber laser barrier over a dim background grid.
-* **Game Mechanics**:
-  * High-stakes reflex duel based on the classic Larson eye scanner.
-  * Time your barrier pulse as the puck reaches your baseline to ricochet it back.
-  * Each successful return increases velocity by $+115\%$ plus a precision depth bonus.
-  * Tests reaction speed and peripheral vision as the puck reaches maximum velocity.
-* **Victory Condition**: Missing the puck results in a goal breach and immediate round loss.
+* **Dial Zone**: Zone 4 (ADC $683\text{--}852$)
+* **Mechanics**:
+  * Kinetic laser pong. A high-energy plasma puck rebounds between Player 1's Blue barrier and Player 2's Amber barrier.
+  * Deflect the puck as it enters your barrier; each return increases speed by $+115\%$.
+* **Win Condition**: First player whose barrier is breached loses the round.
 
 ---
 
 ### Game 6: "Territory Paint" (Rapid Wipe Wars)
-* **Parent Mode**: Color Wipe
-* **Visuals**: A dynamic territory-capture battleground. Player 1 commands Vibrant Sky Blue (`RGB 14, 165, 233`); Player 2 commands Neon Rose Red (`RGB 225, 29, 72`), divided by a sharp white boundary line.
-* **Game Mechanics**:
-  * High-speed territory capture tug-of-war!
-  * Rapidly tap your button to paint the bar in your color.
-  * Each press advances the paint boundary by 1 LED into enemy territory.
-* **Victory Condition**: Completely painting the entire strip with your color claims the bar counter and wins the game.
+* **Dial Zone**: Zone 5 (ADC $853\text{--}1023$)
+* **Mechanics**:
+  * High-speed territory capture! Player 1 commands Sky Blue (`RGB 14, 165, 233`); Player 2 commands Neon Rose Red (`RGB 225, 29, 72`), divided by a sharp white boundary.
+  * Tap your button to advance your color paint stroke across the 12 meters (24 LEDs per tap).
+* **Win Condition**: Completely painting the entire strip with your color claims the bar counter and wins the game.
 
 ---
 
-## 6. Serial Interface & Linux Virtual Visualizer
+## 6. Serial Commands & Remote Control
 
-The firmware includes a full bidirectional serial interface operating at **115200 baud**.
-
-### Virtual Serial Commands
-Send the following characters over USB Serial to control the board remotely:
+Connect at **115200 baud** to control the system via USB Serial:
 
 | Command | Action |
 | :--- | :--- |
 | **`1`** | Simulates Player 1 button press |
 | **`2`** | Simulates Player 2 button press |
-| **`m`** or **`M`** | Toggles to the next ambient mode |
+| **`m`** or **`M`** | Steps to the next ambient lighting mode via serial |
 | **`g`** or **`G`** | Toggles 2-player Game Mode on/off |
-| **`w`** or **`W`** | Sets rotary color to Pure White |
+| **`w`** or **`W`** | Sets mood color to Pure White |
 | **`h<0-65535>`** | Sets hue directly (e.g. `h0` for Red, `h21845` for Green, `h43690` for Blue) |
-| **`b<0-255>`** | Sets global brightness directly (e.g. `b180`) |
+| **`b<0-255>`** | Sets global brightness directly (e.g. `b200`) |
 | **`b`** | Steps brightness up by $+25$ (wraps at 255) |
 | **`c`** or **`C`** | Steps hue by $+4000$ ($\approx 22^\circ$ around the color wheel) |
 
-### Virtual Strip Visualizer Protocol (Backend A)
-When `#define STRIP_BACKEND BACKEND_VIRTUAL_SERIAL` is enabled, the Arduino streams binary LED frames to a Linux desktop application:
-* **Frame Header**: `[0xAA, 0x55, 0x01, NUM_LEDS]` (4 bytes)
-* **Payload**: `[R0, G0, B0, R1, G1, B1, ..., Rn-1, Gn-1, Bn-1]` ($3 \times \text{NUM\_LEDS}$ bytes)
-* **Checksum**: XOR of header bytes and all payload bytes (1 byte)
-
 ---
 
-## 7. Electrical & Safety Guidelines
+## 7. Power Supply & 12-Meter Strip Electrical Guidelines
 
-* **Current Consumption**:
-  * 60 SK6812 / WS2812B LEDs at full white draw up to $\approx 3.6\text{ A}$ at 5V DC ($60\,\text{mA}$ per pixel).
-  * In typical ambient modes with the constant perceptual brightness wheel ($P \approx 85.8$), current draw stays under **$0.8\text{--}1.2\text{ A}$**.
-* **Power Supply**:
-  * Use a regulated **5V DC power supply rated for at least 3A–4A** when running a full 1-meter strip (60 LEDs).
-  * For test setups with 15 LEDs, standard USB power ($500\text{--}1000\,\text{mA}$) is sufficient.
-  * Connect external power supply ground directly to the Arduino GND pin.
-* **Protection Components**:
-  * Place a **$470\,\mu\text{F}\text{--}1000\,\mu\text{F}$ electrolytic capacitor** across 5V and GND near the strip input to prevent initial power-on voltage spikes.
-  * Place a **$330\,\Omega\text{--}470\,\Omega$ resistor** inline between Arduino Digital Pin 6 and the strip Data IN pin.
-
+* **Peak Power Consumption**:
+  * 720 SK6812 RGB LEDs at 100% full white draw up to $\approx 43\text{ A}$ at 5V DC ($60\,\text{mA}$ per LED).
+  * In typical ambient modes and games with normalized brightness, current draw stays around **$6\text{--}12\text{ A}$**.
+* **Power Supply Recommendation**:
+  * Use a heavy-duty **5V DC regulated power supply (rated for at least 15A–20A)**.
+* **Power Injection Across 12 Meters**:
+  * Due to copper trace resistance over a 12-meter run, running power from only one end causes severe voltage drop (yellowing/browning of colors at the far end).
+  * **Inject 5V and GND at least every 3 to 4 meters** (e.g. at 0m, 4m, 8m, and 12m) using thick 14–16 AWG power bus wires.
+  * Connect the power supply ground directly to the Arduino GND pin.
+* **Signal Protection**:
+  * Place a **$330\,\Omega\text{--}470\,\Omega$ series resistor** inline between Arduino Digital Pin 6 and the strip Data IN pin.
+  * Place a **$1000\,\mu\text{F}$ electrolytic capacitor** across 5V and GND at the strip power injection points.
