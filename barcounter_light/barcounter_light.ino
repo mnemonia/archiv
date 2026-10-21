@@ -68,15 +68,97 @@
 
 #include <FastLED.h>
 
-// Forward declaration of score & challenge overlay hook called inside FastLEDDriver::show()
+// ============================================================================
+// Core Enums & Function Forward Declarations
+// Defined at top of file so Arduino preprocessor auto-generated prototypes compile
+// ============================================================================
+
+enum LightModeId {
+  LIGHT_BREATHING_PULSE = 0,
+  LIGHT_TWINKLE_SPARKLE = 1,
+  LIGHT_FIRE_FLAME      = 2,
+  LIGHT_COMET_METEOR    = 3,
+  LIGHT_CYLON_SCANNER   = 4,
+  LIGHT_COLOR_WIPE      = 5,
+  NUM_LIGHT_MODES       = 6
+};
+
+enum GameId {
+  GAME_RESONANCE_PULSE  = 0,
+  GAME_SPARKLE_RUSH     = 1,
+  GAME_FLAME_TUG        = 2,
+  GAME_METEOR_DEFLECTOR = 3,
+  GAME_CYLON_CLASH      = 4,
+  GAME_TERRITORY_PAINT  = 5,
+  NUM_GAMES             = 6
+};
+
+enum SystemState {
+  STATE_IDLE_AMBIENT,     // Ambient bar lighting mode (controlled by lightBehaviorKnob)
+  STATE_CHALLENGE,        // Player pressed button -> challenge initiated, opponent end LED blinking up to 10x
+  STATE_PLAYING,          // Active game match in progress (2 human players or human vs RobotGamer)
+  STATE_MATCH_OVER        // Match complete (a player reached MATCH_WIN_SCORE) -> victory animation
+};
+
+enum GamerId {
+  GAMER_NONE     = 0,
+  GAMER_PLAYER_A = 1,
+  GAMER_PLAYER_B = 2,
+  GAMER_ROBOT    = 3
+};
+
+enum PlayerSide {
+  SIDE_A = 0, // Left end of bar counter (LED index 0, Pin 2)
+  SIDE_B = 1  // Right end of bar counter (LED index NUM_LEDS - 1, Pin 4)
+};
+
+enum NumTarget {
+  TARGET_NONE       = 0,
+  TARGET_HUE        = 1,
+  TARGET_BRIGHTNESS = 2,
+  TARGET_GAME       = 3,
+  TARGET_MODE       = 4
+};
+
+// Forward declarations (resolves Arduino builder preprocessor symbol resolution)
+void resetActiveGame(GameId game);
+void updateActiveGame(GameId game, unsigned long currentMillis);
+void updateActiveLight(LightModeId mode, unsigned long currentMillis);
+void startChallenge(GamerId who);
+void startGame(bool againstRobot);
+void updateChallenge(unsigned long currentMillis);
+void updatePlaying(unsigned long currentMillis);
+void updateMatchOver(unsigned long currentMillis);
 void renderScoreOverlay();
+void applySerialNumericCommand(NumTarget target, long val);
+void handleSerialCommands();
 
 // ============================================================================
-// 1. Strip Geometry & Hardware Pin Configuration
+// 1. Strip Geometry & Board Architecture Configuration
 // ============================================================================
-#define STRIP_LENGTH_METERS      12     // 12 meters total bar counter length
-#define LEDS_PER_METER           60     // 60 LEDs per meter
-#define NUM_LEDS                 (STRIP_LENGTH_METERS * LEDS_PER_METER) // 720 LEDs
+// Physical bar counter installation: 12 meters with 60 LEDs/m (720 physical LEDs).
+//
+// Hardware SRAM Constraints:
+//   - ATmega328P (Arduino Uno / Nano / Pro Mini):
+//       Total hardware SRAM is strictly 2,048 bytes (2 KB).
+//       Allocating 720 RGB LEDs in RAM requires 720 * 3 = 2,160 bytes, which
+//       exceeds the board's entire physical SRAM before loading any other code.
+//       Therefore, on ATmega328P, NUM_LEDS automatically scales to 120 (or 60)
+//       virtual LEDs to fit safely in SRAM (~1KB dynamic memory, leaving ~1KB stack).
+//   - High-Memory Microcontrollers (Arduino Mega 2560, Uno R4, ESP32, Teensy, RP2040):
+//       These boards have 8 KB to 512 KB SRAM, so NUM_LEDS defaults to the full
+//       720 physical LEDs.
+//
+// To manually override the LED count, define NUM_LEDS before compiling.
+#ifndef NUM_LEDS
+  #if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__) || (defined(RAMEND) && RAMEND <= 2048)
+    #define NUM_LEDS                 120    // Scaled for Arduino Uno / Nano 2KB SRAM
+  #else
+    #define STRIP_LENGTH_METERS      12     // 12 meters total bar counter length
+    #define LEDS_PER_METER           60     // 60 LEDs per meter
+    #define NUM_LEDS                 (STRIP_LENGTH_METERS * LEDS_PER_METER) // 720 LEDs
+  #endif
+#endif
 
 #define LED_PIN                  6      // Output data pin for physical SK6812 strip
 
@@ -130,6 +212,12 @@ public:
     }
   }
 
+  void setPixelColor(uint16_t index, const CRGB& color) {
+    if (index < NUM_LEDS) {
+      leds[index] = color;
+    }
+  }
+
   uint32_t getPixelColor(uint16_t index) const {
     if (index >= NUM_LEDS) return 0;
     return ((uint32_t)leds[index].r << 16) | ((uint32_t)leds[index].g << 8) | leds[index].b;
@@ -156,11 +244,20 @@ public:
   void show() {
     renderScoreOverlay(); // Overlay challenge status & point indicators onto strip ends
 #if (STRIP_BACKEND == BACKEND_VIRTUAL_SERIAL)
-    // Optional high-speed serial streaming to desktop visualizer
-    uint8_t header[4] = { 0xAA, 0x55, 0x01, (uint8_t)(NUM_LEDS > 255 ? 255 : NUM_LEDS) };
-    Serial.write(header, 4);
-    uint8_t checksum = header[0] ^ header[1] ^ header[2] ^ header[3];
+    // High-speed serial streaming to desktop visualizer (Extended CMD 0x02 protocol)
+    // Header: 0xAA 0x55 0x02 [count_hi] [count_lo] [gamerA_r] [gamerA_g] [gamerA_b] [gamerB_r] [gamerB_g] [gamerB_b]
     uint8_t br = FastLED.getBrightness();
+    CRGB gA = ledGamerA[0];
+    CRGB gB = ledGamerB[0];
+    uint8_t header[11] = {
+      0xAA, 0x55, 0x02,
+      (uint8_t)(NUM_LEDS >> 8), (uint8_t)(NUM_LEDS & 0xFF),
+      scale8(gA.r, br), scale8(gA.g, br), scale8(gA.b, br),
+      scale8(gB.r, br), scale8(gB.g, br), scale8(gB.b, br)
+    };
+    Serial.write(header, 11);
+    uint8_t checksum = 0;
+    for (uint8_t h = 0; h < 11; h++) checksum ^= header[h];
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
       uint8_t r = scale8(leds[i].r, br);
       uint8_t g = scale8(leds[i].g, br);
@@ -177,7 +274,24 @@ public:
     return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
   }
 
-  // Constant Perceptual Brightness Color Wheel
+  // Portable integer square root for 16-bit integers (avoids pulling in floating-point libm)
+  static inline uint8_t isqrt16(uint16_t val) {
+    uint16_t res = 0;
+    uint16_t bit = 1U << 14;
+    while (bit > val) bit >>= 2;
+    while (bit != 0) {
+      if (val >= res + bit) {
+        val -= res + bit;
+        res = (res >> 1) + bit;
+      } else {
+        res >>= 1;
+      }
+      bit >>= 2;
+    }
+    return (uint8_t)res;
+  }
+
+  // Constant Perceptual Brightness Color Wheel (Integer Math - Zero libm / float dependency)
   // Normalizes RMS perceptual brightness (P = sqrt(0.299*R^2 + 0.587*G^2 + 0.114*B^2))
   // to a uniform P ≈ 85.8 across all 360° of rainbow hues, ensuring RotaryColorKnob
   // has zero influence on the overall brightness of the strip.
@@ -200,14 +314,17 @@ public:
       default: r = v; g = p; b = q; break;
     }
 
-    float pBright = sqrt(0.299f * (float)r * (float)r +
-                         0.587f * (float)g * (float)g +
-                         0.114f * (float)b * (float)b);
-    if (pBright > 0.001f) {
-      float scale = 85.8f / pBright;
-      r = (uint8_t)min(255, (int)((float)r * scale + 0.5f));
-      g = (uint8_t)min(255, (int)((float)g * scale + 0.5f));
-      b = (uint8_t)min(255, (int)((float)b * scale + 0.5f));
+    // P^2 = (77*R^2 + 150*G^2 + 29*B^2) >> 8
+    uint32_t r2 = (uint32_t)r * r;
+    uint32_t g2 = (uint32_t)g * g;
+    uint32_t b2 = (uint32_t)b * b;
+    uint16_t pSquared = (uint16_t)((77UL * r2 + 150UL * g2 + 29UL * b2) >> 8);
+    uint8_t pBright = isqrt16(pSquared);
+    if (pBright > 0) {
+      uint16_t scaleFactor = ((uint32_t)86 * 256) / pBright;
+      r = (uint8_t)min(255, (int)(((uint32_t)r * scaleFactor) >> 8));
+      g = (uint8_t)min(255, (int)(((uint32_t)g * scaleFactor) >> 8));
+      b = (uint8_t)min(255, (int)(((uint32_t)b * scaleFactor) >> 8));
     }
     return Color(r, g, b);
   }
@@ -240,18 +357,8 @@ static int readAnalogStable(uint8_t pin) {
 unsigned long lastBrightnessTurnTime = 0;
 
 // ============================================================================
-// 4. Game Modes Enum & Rotary Game Selection Knob (Analog Pin A1)
+// 4. Game Modes Configuration & Rotary Game Selection Knob (Analog Pin A1)
 // ============================================================================
-enum GameId {
-  GAME_RESONANCE_PULSE  = 0,
-  GAME_SPARKLE_RUSH     = 1,
-  GAME_FLAME_TUG        = 2,
-  GAME_METEOR_DEFLECTOR = 3,
-  GAME_CYLON_CLASH      = 4,
-  GAME_TERRITORY_PAINT  = 5,
-  NUM_GAMES             = 6
-};
-
 const char* const GAME_NAMES[NUM_GAMES] = {
   "Resonance Pulse",
   "Sparkle Rush",
@@ -505,19 +612,9 @@ RotaryColorKnob rotaryColorKnob(PIN_COLOR_KNOB);
 uint32_t global_color = FastLEDDriver::Color(157, 0, 0);
 
 // ============================================================================
-// 7. Ambient Light Modes Enum & Global Light Behavior Knob (Analog Pin A4)
+// 7. Ambient Light Modes & Global Light Behavior Knob (Analog Pin A4)
 // Selects one of the 6 ambient lighting modes across 6 equal dial zones
 // ============================================================================
-enum LightModeId {
-  LIGHT_BREATHING_PULSE = 0,
-  LIGHT_TWINKLE_SPARKLE = 1,
-  LIGHT_FIRE_FLAME      = 2,
-  LIGHT_COMET_METEOR    = 3,
-  LIGHT_CYLON_SCANNER   = 4,
-  LIGHT_COLOR_WIPE      = 5,
-  NUM_LIGHT_MODES       = 6
-};
-
 const char* const LIGHT_MODE_NAMES[NUM_LIGHT_MODES] = {
   "Breathing / Pulse",
   "Twinkle / Sparkle",
@@ -637,25 +734,6 @@ Button btnP2(PIN_BTN_P2);
 // System State, Gamer Identification & GamerHandler Class
 // Encapsulates player identities (Player A, Player B, Robot), sides, input & scoring
 // ============================================================================
-enum SystemState {
-  STATE_IDLE_AMBIENT,     // Ambient bar lighting mode (controlled by lightBehaviorKnob)
-  STATE_CHALLENGE,        // Player pressed button -> challenge initiated, opponent end LED blinking up to 10x
-  STATE_PLAYING,          // Active game match in progress (2 human players or human vs RobotGamer)
-  STATE_MATCH_OVER        // Match complete (a player reached MATCH_WIN_SCORE) -> victory animation
-};
-
-enum GamerId {
-  GAMER_NONE     = 0,
-  GAMER_PLAYER_A = 1,
-  GAMER_PLAYER_B = 2,
-  GAMER_ROBOT    = 3
-};
-
-enum PlayerSide {
-  SIDE_A = 0, // Left end of bar counter (LED index 0, Pin 2)
-  SIDE_B = 1  // Right end of bar counter (LED index NUM_LEDS - 1, Pin 4)
-};
-
 const char* const GAMER_NAMES[4] = {
   "None",
   "Player A",
@@ -1023,14 +1101,20 @@ public:
     if (currentMillis - lastUpdate < 25) return;
     lastUpdate = currentMillis;
 
-    float phase = (float)(currentMillis % BREATH_PERIOD) / (float)BREATH_PERIOD;
-    float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
+    // FastLED sin8 integer sine wave (0..255) avoids floating-point libm
+    uint8_t angle = (uint8_t)(((currentMillis % BREATH_PERIOD) * 256UL) / BREATH_PERIOD);
+    uint8_t wave = sin8(angle);
+    uint8_t factor = 107 + scale8(wave, 102); // 42%..82% brightness factor
 
-    float factor = 0.42f + wave * 0.40f;
-    uint8_t r = (uint8_t)(rotaryColorKnob.getR() * factor);
-    uint8_t g = (uint8_t)(rotaryColorKnob.getG() * factor);
-    uint8_t b = (uint8_t)(rotaryColorKnob.getB() * factor);
-    uint32_t color = FastLEDDriver::Color(r, g, b);
+    uint8_t baseR = rotaryColorKnob.getR();
+    uint8_t baseG = rotaryColorKnob.getG();
+    uint8_t baseB = rotaryColorKnob.getB();
+
+    uint32_t color = FastLEDDriver::Color(
+      scale8(baseR, factor),
+      scale8(baseG, factor),
+      scale8(baseB, factor)
+    );
 
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
       strip.setPixelColor(i, color);
@@ -1043,25 +1127,9 @@ public:
 class TwinkleSparkleLight {
 private:
   unsigned long lastUpdate = 0;
-  uint8_t twinkleBrightness[NUM_LEDS];
-  uint8_t twinkleDeltaBits[(NUM_LEDS + 7) / 8];
-
-  bool getDirectionUp(uint16_t i) const {
-    return (twinkleDeltaBits[i >> 3] >> (i & 7)) & 1;
-  }
-
-  void setDirectionUp(uint16_t i, bool up) {
-    if (up) twinkleDeltaBits[i >> 3] |= (1 << (i & 7));
-    else    twinkleDeltaBits[i >> 3] &= ~(1 << (i & 7));
-  }
 
 public:
-  TwinkleSparkleLight() {
-    for (uint16_t i = 0; i < NUM_LEDS; i++) {
-      twinkleBrightness[i] = random(55, 160);
-      setDirectionUp(i, random(0, 2) == 0);
-    }
-  }
+  TwinkleSparkleLight() {}
 
   void enter() { lastUpdate = 0; }
 
@@ -1069,30 +1137,27 @@ public:
     if (currentMillis - lastUpdate < 50) return;
     lastUpdate = currentMillis;
 
-    for (uint16_t i = 0; i < NUM_LEDS; i++) {
-      int nextB = (int)twinkleBrightness[i] + (getDirectionUp(i) ? 1 : -1);
-      if (nextB >= 220) {
-        setDirectionUp(i, false);
-      } else if (nextB <= 58) {
-        setDirectionUp(i, true);
-      }
-      twinkleBrightness[i] = (uint8_t)constrain(nextB, 58, 220);
-    }
-
     uint8_t baseR = rotaryColorKnob.getR();
     uint8_t baseG = rotaryColorKnob.getG();
     uint8_t baseB = rotaryColorKnob.getB();
 
+    // Procedural twinkle brightness calculation per pixel (zero RAM array footprint)
+    // Combines time offset with prime spatial stride to produce organic, non-repeating twinkle
+    uint16_t timeStep = (uint16_t)(currentMillis >> 4);
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
-      uint8_t br = twinkleBrightness[i];
-      uint8_t r = (uint8_t)(((uint16_t)baseR * br) >> 8);
-      uint8_t g = (uint8_t)(((uint16_t)baseG * br) >> 8);
-      uint8_t b = (uint8_t)(((uint16_t)baseB * br) >> 8);
+      uint8_t angle = (uint8_t)(timeStep * 3 + i * 47);
+      uint8_t wave = sin8(angle);
+      uint8_t br = 58 + scale8(wave, 162); // 58..220
+
+      uint8_t r = scale8(baseR, br);
+      uint8_t g = scale8(baseG, br);
+      uint8_t b = scale8(baseB, br);
+
       if (br > 195) {
         uint8_t spark = (br - 195) * 2;
-        r = min(255, (int)r + spark);
-        g = min(255, (int)g + spark);
-        b = min(255, (int)b + spark);
+        r = qadd8(r, spark);
+        g = qadd8(g, spark);
+        b = qadd8(b, spark);
       }
       strip.setPixelColor(i, FastLEDDriver::Color(r, g, b));
     }
@@ -1103,8 +1168,9 @@ public:
 // --- Light Mode 3: Fire / Flame ---
 class FireFlameLight {
 private:
+  static const uint8_t FIRE_CELLS = 32; // Compact simulation resolution (32 bytes RAM instead of 720)
   unsigned long lastUpdate = 0;
-  uint8_t heat[NUM_LEDS];
+  uint8_t heat[FIRE_CELLS];
 
   uint32_t heatToColor(uint8_t temp) {
     temp = max((uint8_t)80, temp);
@@ -1116,22 +1182,16 @@ private:
     uint8_t baseB = rotaryColorKnob.getB();
 
     if (t192 > 0x80) { // Hottest: blend toward white hot
-      uint8_t r = min(255, (int)baseR + ramp);
-      uint8_t g = min(255, (int)baseG + ramp);
-      uint8_t b = min(255, (int)baseB + ramp);
+      uint8_t r = qadd8(baseR, ramp);
+      uint8_t g = qadd8(baseG, ramp);
+      uint8_t b = qadd8(baseB, ramp);
       return FastLEDDriver::Color(r, g, b);
     } else if (t192 > 0x40) { // Medium: full saturation of base color
       uint8_t factor = (t192 << 1);
-      uint8_t r = (uint8_t)(((uint16_t)baseR * factor) >> 8);
-      uint8_t g = (uint8_t)(((uint16_t)baseG * factor) >> 8);
-      uint8_t b = (uint8_t)(((uint16_t)baseB * factor) >> 8);
-      return FastLEDDriver::Color(r, g, b);
+      return FastLEDDriver::Color(scale8(baseR, factor), scale8(baseG, factor), scale8(baseB, factor));
     } else { // Coolest: dark ember base color
       uint8_t factor = max((uint8_t)60, (uint8_t)(t192 << 2));
-      uint8_t r = (uint8_t)(((uint16_t)baseR * factor) >> 8);
-      uint8_t g = (uint8_t)(((uint16_t)baseG * factor) >> 8);
-      uint8_t b = (uint8_t)(((uint16_t)baseB * factor) >> 8);
-      return FastLEDDriver::Color(r, g, b);
+      return FastLEDDriver::Color(scale8(baseR, factor), scale8(baseG, factor), scale8(baseB, factor));
     }
   }
 
@@ -1147,20 +1207,23 @@ public:
     lastUpdate = currentMillis;
 
     // Cooling
-    for (uint16_t i = 0; i < NUM_LEDS; i++) {
+    for (uint8_t i = 0; i < FIRE_CELLS; i++) {
       heat[i] = (heat[i] > 79) ? (heat[i] - 1) : 78;
     }
 
     // Thermal diffusion
-    for (int k = NUM_LEDS - 1; k >= 2; k--) {
+    for (int k = FIRE_CELLS - 1; k >= 2; k--) {
       heat[k] = (heat[k - 1] + heat[k - 2] + heat[k - 2]) / 3;
     }
     if (random(0, 10) < 2) {
-      int sparkPos = random(0, NUM_LEDS);
+      int sparkPos = random(0, FIRE_CELLS);
       heat[sparkPos] = min(255, heat[sparkPos] + random(60, 110));
     }
+
+    // Render mapped heat cells across physical strip
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
-      strip.setPixelColor(i, heatToColor(heat[i]));
+      uint8_t cell = (uint8_t)(((uint32_t)i * FIRE_CELLS) / NUM_LEDS);
+      strip.setPixelColor(i, heatToColor(heat[cell]));
     }
     strip.show();
   }
@@ -1245,11 +1308,12 @@ public:
     uint8_t baseG = rotaryColorKnob.getG();
     uint8_t baseB = rotaryColorKnob.getB();
 
-    float phase = (float)(currentMillis % SWEEP_PERIOD) / (float)SWEEP_PERIOD;
+    uint8_t angle = (uint8_t)(((currentMillis % SWEEP_PERIOD) * 256UL) / SWEEP_PERIOD);
+    int16_t s = (int16_t)sin8(angle) - 128; // -128..+127 integer sine wave
     float center = (float)(NUM_LEDS - 1) * 0.5f;
     float margin = max(0.5f, min(2.0f, (float)NUM_LEDS * 0.05f));
     float amplitude = max(0.5f, center - margin);
-    float eyePos = center + amplitude * sin(phase * 2.0f * PI);
+    float eyePos = center + amplitude * ((float)s / 128.0f);
     float glowRadius = max(2.0f, min(36.0f, (float)NUM_LEDS * 0.06f));
 
     for (uint16_t i = 0; i < NUM_LEDS; i++) {
@@ -1368,9 +1432,10 @@ public:
       return;
     }
 
-    float phase = (float)(currentMillis % BREATH_PERIOD) / (float)BREATH_PERIOD;
-    float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
-    bool inResonance = (wave >= 0.88f);
+    // FastLED sin8 integer wave avoids floating-point libm
+    uint8_t angle = (uint8_t)(((currentMillis % BREATH_PERIOD) * 256UL) / BREATH_PERIOD);
+    uint8_t wave = sin8(angle);
+    bool inResonance = (wave >= 225); // ~88% of 255
     int16_t pushStep = max(1, (int)(NUM_LEDS / 15));
 
     // Player on Side A (Player A or Robot)
@@ -1403,11 +1468,11 @@ public:
       }
     }
 
-    // Ambient background floor in mood color
-    float baseFactor = 0.35f + wave * 0.20f;
-    uint8_t rBase = (uint8_t)(rotaryColorKnob.getR() * baseFactor);
-    uint8_t gBase = (uint8_t)(rotaryColorKnob.getG() * baseFactor);
-    uint8_t bBase = (uint8_t)(rotaryColorKnob.getB() * baseFactor);
+    // Ambient background floor in mood color (integer scaling)
+    uint8_t factor = 89 + scale8(wave, 51); // 0.35 + (wave/255)*0.20
+    uint8_t rBase = scale8(rotaryColorKnob.getR(), factor);
+    uint8_t gBase = scale8(rotaryColorKnob.getG(), factor);
+    uint8_t bBase = scale8(rotaryColorKnob.getB(), factor);
     uint32_t baseCol = FastLEDDriver::Color(rBase, gBase, bBase);
     for (uint16_t i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, baseCol);
 
@@ -1961,10 +2026,10 @@ public:
     switch (game) {
       case GAME_RESONANCE_PULSE: {
         const unsigned long BREATH_PERIOD = 7500;
-        float phase = (float)(currentMillis % BREATH_PERIOD) / (float)BREATH_PERIOD;
-        float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
+        uint8_t angle = (uint8_t)(((currentMillis % BREATH_PERIOD) * 256UL) / BREATH_PERIOD);
+        uint8_t wave = sin8(angle); // 0..255 integer wave
 
-        if (wave >= 0.88f) {
+        if (wave >= 225) { // In resonance crest
           if (!hasPressedThisPeak && targetPeakTime == 0) {
             targetPeakTime = currentMillis + random(70, 210);
           }
@@ -1973,7 +2038,7 @@ public:
             hasPressedThisPeak = true;
             targetPeakTime = 0;
           }
-        } else if (wave < 0.75f) {
+        } else if (wave < 191) {
           hasPressedThisPeak = false;
           targetPeakTime = 0;
         }
@@ -2220,10 +2285,10 @@ void updateMatchOver(unsigned long currentMillis) {
   // Celebratory victory light effect across the strip in winner's color
   CRGB winColor = gamerHandler.getMatchWinnerColor();
 
-  // Fast celebratory pulse wave
-  float phase = (float)((currentMillis - matchOverTime) % 600) / 600.0f;
-  float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
-  uint8_t br = 70 + (uint8_t)(wave * 185);
+  // Fast celebratory pulse wave using FastLED sin8 (avoids floating-point libm)
+  uint8_t angle = (uint8_t)((((currentMillis - matchOverTime) % 600) * 256UL) / 600);
+  uint8_t wave = sin8(angle);
+  uint8_t br = 70 + scale8(wave, 185);
 
   CRGB pulseCol = CRGB(
     scale8(winColor.r, br),
@@ -2244,30 +2309,41 @@ void updateMatchOver(unsigned long currentMillis) {
 // ============================================================================
 // 14. Serial Command Parser
 // ============================================================================
+void applySerialNumericCommand(NumTarget target, long val) {
+  if (target == TARGET_HUE) {
+    if (val < 0 || val > 65535) rotaryColorKnob.setWhite();
+    else rotaryColorKnob.setHue((uint16_t)val);
+    global_color = rotaryColorKnob.getRGB();
+  } else if (target == TARGET_BRIGHTNESS) {
+    if (val < 0) val = 0;
+    if (val > 255) val = 255;
+    brightnessKnob.setBrightness((uint8_t)val);
+    strip.setBrightness(brightnessKnob.getBrightness());
+  } else if (target == TARGET_GAME) {
+    if (val >= 0 && val < NUM_GAMES) {
+      resetActiveGame((GameId)val);
+      Serial.print(F("[Serial] Selected Game: "));
+      Serial.println(GAME_NAMES[val]);
+    }
+  } else if (target == TARGET_MODE) {
+    if (val >= 0 && val < NUM_LIGHT_MODES) {
+      currentLightMode = (LightModeId)val;
+      strip.clear();
+      Serial.print(F("[Serial] Ambient Mode: "));
+      Serial.println(LIGHT_MODE_NAMES[currentLightMode]);
+    }
+  }
+}
+
 void handleSerialCommands() {
   static char numBuf[8];
   static uint8_t numIdx = 0;
-  enum NumTarget { TARGET_NONE, TARGET_HUE, TARGET_BRIGHTNESS, TARGET_GAME };
   static NumTarget numTarget = TARGET_NONE;
   static unsigned long lastDigitTime = 0;
 
   if (numTarget != TARGET_NONE && numIdx > 0 && (millis() - lastDigitTime > 60)) {
     numBuf[numIdx] = '\0';
-    long val = atol(numBuf);
-    if (numTarget == TARGET_HUE) {
-      if (val < 0 || val > 65535) rotaryColorKnob.setWhite();
-      else rotaryColorKnob.setHue((uint16_t)val);
-      global_color = rotaryColorKnob.getRGB();
-    } else if (numTarget == TARGET_BRIGHTNESS) {
-      if (val < 0) val = 0;
-      if (val > 255) val = 255;
-      brightnessKnob.setBrightness((uint8_t)val);
-      strip.setBrightness(brightnessKnob.getBrightness());
-    } else if (numTarget == TARGET_GAME) {
-      if (val >= 0 && val < NUM_GAMES) {
-        resetActiveGame((GameId)val);
-      }
-    }
+    applySerialNumericCommand(numTarget, atol(numBuf));
     numTarget = TARGET_NONE;
     numIdx = 0;
   }
@@ -2285,21 +2361,19 @@ void handleSerialCommands() {
       } else {
         numBuf[numIdx] = '\0';
         if (numIdx > 0) {
-          long val = atol(numBuf);
-          if (numTarget == TARGET_HUE) {
-            if (val < 0 || val > 65535) rotaryColorKnob.setWhite();
-            else rotaryColorKnob.setHue((uint16_t)val);
-            global_color = rotaryColorKnob.getRGB();
-          } else if (numTarget == TARGET_BRIGHTNESS) {
-            if (val < 0) val = 0;
-            if (val > 255) val = 255;
-            brightnessKnob.setBrightness((uint8_t)val);
-            strip.setBrightness(brightnessKnob.getBrightness());
-          }
+          applySerialNumericCommand(numTarget, atol(numBuf));
         } else {
           if (numTarget == TARGET_BRIGHTNESS) {
             brightnessKnob.stepBrightness(25);
             strip.setBrightness(brightnessKnob.getBrightness());
+          } else if (numTarget == TARGET_MODE) {
+            currentLightMode = (LightModeId)(((int)currentLightMode + 1) % NUM_LIGHT_MODES);
+            strip.clear();
+            Serial.print(F("[Serial] Ambient Mode: "));
+            Serial.println(LIGHT_MODE_NAMES[currentLightMode]);
+          } else if (numTarget == TARGET_GAME) {
+            GameId nextG = (GameId)(((int)gameKnob.getSelectedGame() + 1) % NUM_GAMES);
+            resetActiveGame(nextG);
           }
         }
         numTarget = TARGET_NONE;
@@ -2319,15 +2393,18 @@ void handleSerialCommands() {
       numTarget = TARGET_BRIGHTNESS;
       numIdx = 0;
       lastDigitTime = millis();
+    } else if (c == 'k' || c == 'K') {
+      numTarget = TARGET_GAME;
+      numIdx = 0;
+      lastDigitTime = millis();
+    } else if (c == 'm' || c == 'M') {
+      numTarget = TARGET_MODE;
+      numIdx = 0;
+      lastDigitTime = millis();
     } else if (c == '1') {
       gamerHandler.triggerVirtualPress(SIDE_A);
     } else if (c == '2') {
       gamerHandler.triggerVirtualPress(SIDE_B);
-    } else if (c == 'm' || c == 'M') {
-      currentLightMode = (LightModeId)(((int)currentLightMode + 1) % NUM_LIGHT_MODES);
-      strip.clear();
-      Serial.print(F("[Serial] Ambient Mode: "));
-      Serial.println(LIGHT_MODE_NAMES[currentLightMode]);
     } else if (c == 'g' || c == 'G') {
       if (systemState == STATE_IDLE_AMBIENT) {
         startChallenge(GAMER_PLAYER_A);

@@ -450,3 +450,35 @@ Connect at **115200 baud** to control the system via USB Serial:
 * **Signal Protection**:
   * Place a **$330\,\Omega\text{--}470\,\Omega$ series resistor** inline between Arduino Digital Pin 6 and the strip Data IN pin.
   * Place a **$1000\,\mu\text{F}$ electrolytic capacitor** across 5V and GND at the strip power injection points.
+
+---
+
+## 9. Microcontroller Hardware Architecture & Memory Considerations
+
+Driving a 12-meter addressable LED strip (720 physical LEDs) alongside 6 ambient lighting modes, 6 competitive arcade games, an autonomous NPC AI (RobotGamer), debounced button handlers, and quad-potentiometer analog smoothing introduces distinct hardware memory constraints:
+
+### The 2 KB SRAM Hardware Barrier on ATmega328P (Arduino Uno / Nano)
+* The **ATmega328P** (standard Arduino Uno R3, Nano, Pro Mini) has **strictly 2,048 bytes (2 KB) of dynamic memory (SRAM)**.
+* Allocating a raw 720-LED RGB color buffer in FastLED requires $720 \times 3 = \mathbf{2,160\text{ bytes}}$, which exceeds the board's entire 2,048-byte physical SRAM before loading the Arduino runtime, serial buffers, or any game variables.
+* **Automatic Scaling on ATmega328P**: The sketch automatically detects when compiling for ATmega328P via `#if defined(__AVR_ATmega328P__)` and scales `NUM_LEDS` to **120** (or 60) virtual LEDs ($360\text{ bytes}$ buffer). Total dynamic memory drops to $\approx 1,040\text{ bytes}$ (51%), leaving nearly 1 KB of SRAM for the stack and local variables.
+* You can manually override `NUM_LEDS` at the top of `barcounter_light.ino` to any value.
+
+### Recommended Microcontrollers for Full 720-LED Physical Installations
+To control all 720 LEDs individually at full resolution across 12 meters:
+1. **Arduino Uno R4 (Minima / WiFi)**:
+   * **Direct drop-in replacement**: 100% pin-compatible with the Arduino Uno R3 header layout and 5V logic.
+   * **Memory**: **32 KB SRAM** (16x more than Uno R3) and **256 KB Flash** (8x more). Runs all 720 LEDs natively with zero memory pressure.
+2. **Arduino Mega 2560**:
+   * **Memory**: **8 KB SRAM** and **256 KB Flash**. Fully fits the 720-LED buffer ($2,160\text{ bytes}$) with over 5 KB free RAM.
+3. **ESP32 / ESP8266 / Raspberry Pi Pico (RP2040)**:
+   * **Memory**: 264 KB to 520 KB SRAM and 2 MB to 16 MB Flash. Easily handles massive LED counts with microsecond frame rates.
+
+### Memory Optimizations Applied in the Firmware
+1. **Zero-Allocation Procedural Twinkle (`TwinkleSparkleLight`)**:
+   * Twinkle shimmer is computed procedurally using FastLED's `sin8()` with spatial prime stride. Eliminates the previous 720-byte brightness array and 90-byte bitmask (**saved 810 bytes SRAM**).
+2. **Compact 32-Cell Heat Simulation (`FireFlameLight`)**:
+   * Simulates thermal cooling and diffusion across 32 compact heat cells and maps them across the strip length (**saved 688 bytes SRAM**).
+3. **Fast Integer Trigonometry & Square Root (Zero `libm` dependency)**:
+   * Replaced floating-point `sin()` and `sqrt()` with integer `sin8()` and bitwise integer square root `isqrt16()`. Completely decouples the sketch from the floating-point math library (**saved $\approx 2.8\text{ KB}$ Flash program storage**).
+4. **Deduplicated Command Parser**:
+   * Unified serial command numerical handling into `applySerialNumericCommand()`, preventing code replication (**saved $\approx 250\text{ bytes}$ Flash**).
