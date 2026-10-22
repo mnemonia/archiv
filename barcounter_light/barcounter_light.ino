@@ -339,17 +339,79 @@ public:
 FastLEDDriver strip;
 
 // ============================================================================
-// 3. Stable Analog Input & Knob Tracking
+// 3. Non-Blocking Asynchronous Analog Input Scanner & Filter
 // ============================================================================
-// Discards first conversion after ADC MUX channel switch to pre-charge internal
-// sample-and-hold capacitor, eliminating crosstalk/ghosting between adjacent analog pins.
-static int readAnalogStable(uint8_t pin) {
-  analogRead(pin);        // Select MUX channel and discard first reading
-  delayMicroseconds(35);  // Settle time for sample-and-hold capacitor
-  int val1 = analogRead(pin);
-  delayMicroseconds(20);
-  int val2 = analogRead(pin);
-  return (val1 + val2) >> 1; // 2-sample average
+// Zero blocking, zero delayMicroseconds, zero local spin-locks.
+// Reads analog inputs via non-blocking round-robin time-sliced sampling:
+// - Exactly ONE single-channel hardware conversion is triggered per time slice (~2 ms).
+// - Channel switching is interleaved across loop passes, giving the internal
+//   sample-and-hold capacitor milliseconds to settle naturally while other code executes.
+// - An Exponential Moving Average (EMA) low-pass filter (75% history / 25% new sample)
+//   smooths wiper noise and rail-dip crosstalk without any execution stalls.
+// - Callers query filtered values instantaneously in O(1) time without blocking.
+
+class AnalogScanner {
+private:
+  static const uint8_t NUM_CHANNELS = 4;
+  const uint8_t pins[NUM_CHANNELS] = {
+    PIN_GAME_KNOB,
+    PIN_BRIGHTNESS_KNOB,
+    PIN_COLOR_KNOB,
+    PIN_LIGHT_BEHAVIOR_KNOB
+  };
+  int smoothed[NUM_CHANNELS];
+  uint8_t currentChannel;
+  unsigned long lastSampleTime;
+  const unsigned long SAMPLE_INTERVAL = 2; // ms between single-channel conversions
+
+public:
+  AnalogScanner() : currentChannel(0), lastSampleTime(0) {
+    for (uint8_t i = 0; i < NUM_CHANNELS; i++) smoothed[i] = -1;
+  }
+
+  void begin() {
+    for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
+      pinMode(pins[i], INPUT);
+      smoothed[i] = analogRead(pins[i]);
+    }
+    lastSampleTime = millis();
+  }
+
+  // Non-blocking update called in loop() - advances one channel per time slice
+  void update(unsigned long currentMillis) {
+    if (currentMillis - lastSampleTime < SAMPLE_INTERVAL) return;
+    lastSampleTime = currentMillis;
+
+    uint8_t pin = pins[currentChannel];
+    int raw = analogRead(pin); // Single fast hardware conversion (~104µs, zero spin-locks, zero delays)
+
+    if (smoothed[currentChannel] < 0) {
+      smoothed[currentChannel] = raw;
+    } else {
+      // Exponential Moving Average filter: 75% historical + 25% new sample
+      // Fast integer math: ((smoothed * 3) + raw + 2) >> 2
+      smoothed[currentChannel] = ((smoothed[currentChannel] * 3) + raw + 2) >> 2;
+    }
+
+    currentChannel = (currentChannel + 1) % NUM_CHANNELS;
+  }
+
+  // Instantaneous O(1) non-blocking access to the latest filtered value
+  int getValue(uint8_t pin) const {
+    for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
+      if (pins[i] == pin) {
+        return smoothed[i] >= 0 ? smoothed[i] : 0;
+      }
+    }
+    return analogRead(pin); // Fallback for unmanaged pin
+  }
+};
+
+AnalogScanner analogScanner;
+
+// Instantaneous non-blocking accessor replacing legacy readAnalogStable
+static inline int readAnalogStable(uint8_t pin) {
+  return analogScanner.getValue(pin);
 }
 
 // Timestamp of last active adjustment of RotaryBrightnessKnob
@@ -2426,6 +2488,8 @@ void handleSerialCommands() {
 // 15. Arduino setup() and loop()
 // ============================================================================
 void setup() {
+  analogScanner.begin();
+
   rotaryColorKnob.begin();
   global_color = rotaryColorKnob.getRGB();
 
@@ -2455,6 +2519,9 @@ void setup() {
 
 void loop() {
   unsigned long currentMillis = millis();
+
+  // Non-blocking interleaved analog scanner (1 channel per 2ms, zero delays, zero spin-locks)
+  analogScanner.update(currentMillis);
 
   // 1. Read hardware inputs
   rotaryColorKnob.update();
