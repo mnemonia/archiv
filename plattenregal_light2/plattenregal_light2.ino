@@ -69,23 +69,23 @@ public:
 
 // ============================================================================
 // Mode 1: NormalSmoothBreathingWarmWhite
-// Organic, tranquil breathing pulsation across all 18 LEDs in calibrated warm white.
-// Color is locked to ~2700K incandescent white (CRGB(255, 218, 150)).
+// Organic, tranquil breathing pulsation across all 18 LEDs in calibrated warm candlelight white.
+// Color is locked to ~1900K warm candlelight white (CRGB(255, 147, 41)).
 // ============================================================================
 class NormalSmoothBreathingWarmWhite : public LightMode {
 private:
   unsigned long lastUpdateMillis;
   const unsigned long UPDATE_INTERVAL = 20;   // 50 FPS smooth breathing
-  const unsigned long BREATH_PERIOD   = 4500;  // 4.5 seconds full breathing cycle
+  const unsigned long BREATH_PERIOD   = 45000;  // 45 seconds full breathing cycle
 
   // Breathing depth: oscillates subtly between 35% and 90% of brightness
   // to maintain an ambient warm glow without harsh shutoffs or power-rail bounce
   const float MIN_FACTOR = 0.35f;
   const float MAX_FACTOR = 0.90f;
 
-  // Calibrated warm white (~2700K incandescent tone for SK6812 RGB)
-  // R:G:B ratios preserve clean, cozy warm white without yellow, orange, or green cast
-  const CRGB WARM_WHITE = CRGB(255, 218, 150);
+  // Calibrated warm candlelight white (~1900K candle flame tone / FastLED Candle standard)
+  // R:G:B ratios produce a rich, cozy, golden-amber candle glow while preserving white luminance
+  const CRGB WARM_WHITE = CRGB(255, 147, 41);
 
 public:
   NormalSmoothBreathingWarmWhite() : lastUpdateMillis(0) {}
@@ -130,6 +130,9 @@ public:
 // Mode 2: SmoothRgbRainbowLowFrequencyWave
 // Gentle, low-frequency traveling rainbow wave across the 18 LEDs.
 // Hue advances slowly over ~12.5 seconds, producing a tranquil ambient wave.
+// The rainbow wave is stretched across 8 * NUM_LEDS (144 LEDs, increased by
+// a factor of 4 over the previous 2 * NUM_LEDS), allowing colors to spread out
+// broadly across the entire shelf with subtle, monochromatic-gradient transitions.
 // Colors are generated at 100% saturation and value (CHSV(hue, 255, 255)),
 // leaving luminosity control strictly to the global BrightnessController.
 // ============================================================================
@@ -141,7 +144,12 @@ private:
 
   // At 50 FPS (20ms interval), advancing by 105 per frame:
   // 65536 / 105 ≈ 624 frames -> 624 * 20ms ≈ 12.5s per full 360° rainbow rotation.
-  const uint16_t HUE_INCREMENT = 105;
+  const uint16_t HUE_INCREMENT = 10;//105;
+
+  // Spatial color spread factor:
+  // Stretched by factor 4 over previous 2*NUM_LEDS -> 8 * NUM_LEDS (144 LEDs).
+  // (Set to 4 if 4*NUM_LEDS total spread is preferred).
+  const uint8_t COLOR_SPREAD_FACTOR = 8;
 
 public:
   SmoothRgbRainbowLowFrequencyWave() : lastUpdateMillis(0), hueAccumulator(0) {}
@@ -166,9 +174,9 @@ public:
     hueAccumulator += HUE_INCREMENT;
     uint8_t baseHue = (uint8_t)(hueAccumulator >> 8);
 
-    // Distribute a gentle, continuous spatial rainbow wave across all 18 LEDs
+    // Stretched spatial rainbow wave: full 360° color cycle spans COLOR_SPREAD_FACTOR * NUM_LEDS
     for (uint8_t i = 0; i < NUM_LEDS; i++) {
-      uint8_t pixelHue = baseHue + (uint8_t)(((uint32_t)i * 256UL) / NUM_LEDS);
+      uint8_t pixelHue = baseHue + (uint8_t)(((uint32_t)i * 256UL) / ((uint32_t)COLOR_SPREAD_FACTOR * NUM_LEDS));
       leds[i] = CHSV(pixelHue, 255, 255);
     }
     FastLED.show();

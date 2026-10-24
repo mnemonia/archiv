@@ -9,7 +9,7 @@ An Arduino-based lighting controller designed for vinyl record shelf (*Plattenre
 * **Target Hardware**: Arduino Uno, Nano, Pro Mini, or compatible ATmega328P microcontrollers.
 * **Lighting Hardware**: 18 individually addressable **SK6812 RGB LEDs** (GRB color order, $800\,\text{kHz}$ single-wire protocol).
 * **Two Operating Modes**:
-  1. **`NormalSmoothBreathingWarmWhite`**: Calibrated $\sim 2700\,\text{K}$ warm white with organic, soothing sinusoidal breathing pulsation.
+  1. **`NormalSmoothBreathingWarmWhite`**: Calibrated $\sim 1900\,\text{K}$ warm candlelight white with organic, soothing sinusoidal breathing pulsation.
   2. **`SmoothRgbRainbowLowFrequencyWave`**: Gentle, low-frequency traveling rainbow wave traversing across all 18 LEDs.
 * **2-State Digital Mode Switch (Pin 11)**: Selects between the two modes via a physical toggle switch or 2-position rotary switch.
 * **Master BrightnessController (Analog Pin A2)**:
@@ -49,16 +49,16 @@ An Arduino-based lighting controller designed for vinyl record shelf (*Plattenre
              │                              │
              ▼                              ▼
  [NormalSmoothBreathingWarmWhite]   [SmoothRgbRainbowLowFrequencyWave]
- - Incandescent Warm White (~2700K)  - Low-Frequency Rainbow Wave (~12.5s)
+ - Warm Candlelight White (~1900K)   - Low-Frequency Rainbow Wave (~12.5s)
  - Sinusoidal Breathing (~4.5s)      - 100% Saturated Pure Spectrum
  - 50 FPS Non-blocking               - 50 FPS Non-blocking
 ```
 
 ### Mode 1: `NormalSmoothBreathingWarmWhite`
-* **Visual Character**: Gentle, organic pulsation across all 18 LEDs in calibrated warm incandescent white.
+* **Visual Character**: Gentle, organic pulsation across all 18 LEDs in calibrated warm candlelight white.
 * **Color Calibration**:
-  * Calibrated to `CRGB(255, 218, 150)` ($\sim 2700\,\text{K}$ incandescent tone).
-  * The RGB channel ratios are scaled proportionally during breathing so the warm white color temperature remains strictly constant throughout the entire breathing stroke.
+  * Calibrated to `CRGB(255, 147, 41)` ($\sim 1900\,\text{K}$ candle flame / FastLED Candle standard).
+  * The RGB channel ratios are scaled proportionally during breathing so the warm candlelight tone remains strictly constant throughout the entire breathing stroke.
 * **Breathing Dynamics**:
   * **Period**: 4.5 seconds per breath cycle (`BREATH_PERIOD = 4500 ms`).
   * **Waveform**: Sinusoidal $\frac{1 - \cos(\theta)}{2}$ curve for organic respiration.
@@ -69,7 +69,7 @@ An Arduino-based lighting controller designed for vinyl record shelf (*Plattenre
 * **Visual Character**: Serene, low-frequency flowing rainbow wave traversing the vinyl shelf.
 * **Dynamics**:
   * **Temporal Frequency**: Full $360^\circ$ rainbow color rotation advances slowly over $\approx 12.5$ seconds (`hueAccumulator += 105` at 50 FPS).
-  * **Spatial Wave**: Exactly one complete, continuous rainbow wave is smoothly distributed across the 18 LEDs (`delta = 256 / 18`).
+  * **Spatial Wave**: The full $360^\circ$ rainbow color cycle is stretched across $8 \times \text{NUM\_LEDS}$ (144 LEDs, increased by factor 4 over the earlier $2 \times \text{NUM\_LEDS}$), spreading each color broadly so that adjacent LEDs shift by only $\approx 1.77$ hue units for an ultra-subtle, serene monochromatic gradient.
   * **Vivid Spectrum**: Pixels are rendered at full saturation and value (`CHSV(pixelHue, 255, 255)`).
   * **Brightness Independence**: Master luminosity is governed purely by the `BrightnessController` on Pin A2, keeping colors pure and unshifted.
 * **Cadence**: 50 FPS (`UPDATE_INTERVAL = 20 ms`).
