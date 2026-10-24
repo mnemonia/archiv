@@ -80,8 +80,8 @@ private:
 
   // Breathing depth: oscillates subtly between 30% and 90% of brightness
   // to maintain an ambient warm glow without harsh shutoffs or power-rail bounce
-  const float MIN_FACTOR = 0.30f;
-  const float MAX_FACTOR = 0.90f;
+  const float MIN_FACTOR = 0.50f;
+  const float MAX_FACTOR = 1.00f;
 
   // Calibrated warm candlelight white (~1900K candle flame tone / FastLED Candle standard)
   // R:G:B ratios produce a rich, cozy, golden-amber candle glow while preserving white luminance
