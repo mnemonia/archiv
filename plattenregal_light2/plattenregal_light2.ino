@@ -75,20 +75,28 @@ public:
 class NormalSmoothBreathingWarmWhite : public LightMode {
 private:
   unsigned long lastUpdateMillis;
-  const unsigned long UPDATE_INTERVAL = 20;   // 50 FPS smooth breathing
-  const unsigned long BREATH_PERIOD   = 45000;  // 45 seconds full breathing cycle
+  const unsigned long UPDATE_INTERVAL = 20;    // 50 FPS smooth breath evaluation
+  const unsigned long BREATH_PERIOD   = 30000; // 30 seconds calm, slow breathing cycle
 
-  // Breathing depth: oscillates subtly between 35% and 90% of brightness
+  // Breathing depth: oscillates subtly between 30% and 90% of brightness
   // to maintain an ambient warm glow without harsh shutoffs or power-rail bounce
-  const float MIN_FACTOR = 0.35f;
+  const float MIN_FACTOR = 0.30f;
   const float MAX_FACTOR = 0.90f;
 
   // Calibrated warm candlelight white (~1900K candle flame tone / FastLED Candle standard)
   // R:G:B ratios produce a rich, cozy, golden-amber candle glow while preserving white luminance
   const CRGB WARM_WHITE = CRGB(255, 147, 41);
 
+  CRGB lastDisplayedColor;
+  uint8_t lastBrightness;
+  bool firstFrame;
+
 public:
-  NormalSmoothBreathingWarmWhite() : lastUpdateMillis(0) {}
+  NormalSmoothBreathingWarmWhite()
+    : lastUpdateMillis(0),
+      lastDisplayedColor(0, 0, 0),
+      lastBrightness(255),
+      firstFrame(true) {}
 
   LightModeId getId() const override {
     return MODE_NORMAL_SMOOTH_BREATHING_WARM_WHITE;
@@ -100,29 +108,39 @@ public:
 
   void enter() override {
     lastUpdateMillis = 0;
+    firstFrame = true;
   }
 
   void update(unsigned long currentMillis) override {
     if (currentMillis - lastUpdateMillis < UPDATE_INTERVAL) return;
     lastUpdateMillis = currentMillis;
 
-    // Organic breathing waveform using (1 - cos(theta)) / 2
-    // Smoothly rises from trough to peak and returns to trough
+    // Organic sinusoidal breathing waveform (1 - cos(theta)) / 2
+    // Smoothly and calmly traverses from trough (min) to peak (max) over 30 seconds
     float phase = (float)(currentMillis % BREATH_PERIOD) / (float)BREATH_PERIOD;
     float wave = 0.5f * (1.0f - cos(phase * 2.0f * PI));
 
-    // Dynamic factor within subtle breathing range
+    // Dynamic factor within calm breathing range
     float factor = MIN_FACTOR + wave * (MAX_FACTOR - MIN_FACTOR);
 
-    // Scale RGB channels equally to preserve exact warm-white chromaticity
+    // Scale RGB channels equally to preserve exact candlelight color balance
     CRGB pulseColor(
       (uint8_t)(WARM_WHITE.r * factor + 0.5f),
       (uint8_t)(WARM_WHITE.g * factor + 0.5f),
       (uint8_t)(WARM_WHITE.b * factor + 0.5f)
     );
 
-    fill_solid(leds, NUM_LEDS, pulseColor);
-    FastLED.show();
+    uint8_t currentBrightness = FastLED.getBrightness();
+
+    // Anti-flicker guard: only update strip when displayed color or brightness changes
+    if (firstFrame || pulseColor != lastDisplayedColor || currentBrightness != lastBrightness) {
+      firstFrame = false;
+      lastDisplayedColor = pulseColor;
+      lastBrightness = currentBrightness;
+
+      fill_solid(leds, NUM_LEDS, pulseColor);
+      FastLED.show();
+    }
   }
 };
 
@@ -209,18 +227,18 @@ private:
       lastRaw = raw;
       filteredRaw = raw;
     } else {
-      // 3-count deadband to absorb wiper electrical/thermal noise
-      if (abs(raw - lastRaw) > 2) {
+      // 4-count deadband to absorb wiper electrical/thermal noise
+      if (abs(raw - lastRaw) > 3) {
         lastRaw = raw;
+        // Smooth exponential moving average: 75% historical + 25% new sample
+        filteredRaw = (filteredRaw * 3 + lastRaw) / 4;
       }
-      // Smooth exponential moving average: 75% historical + 25% new sample
-      filteredRaw = (filteredRaw * 3 + lastRaw) / 4;
     }
     return filteredRaw;
   }
 
 public:
-  BrightnessController(uint8_t analogPin, unsigned long sampleIntervalMs = 20, uint8_t initialBrightness = 180)
+  BrightnessController(uint8_t analogPin, unsigned long sampleIntervalMs = 25, uint8_t initialBrightness = 180)
     : pin(analogPin),
       sampleInterval(sampleIntervalMs),
       lastCheckMillis(0),
@@ -233,28 +251,33 @@ public:
     FastLED.setBrightness(currentBrightness);
   }
 
-  void update(unsigned long currentMillis, bool force = false) {
-    if (!force && (currentMillis - lastCheckMillis < sampleInterval)) return;
+  bool update(unsigned long currentMillis, bool force = false) {
+    if (!force && (currentMillis - lastCheckMillis < sampleInterval)) return false;
     lastCheckMillis = currentMillis;
 
     int raw = readFilteredRaw();
 
     // Map 0..1023 analog reading to 0..255 global luminosity scale
     // Clamping at ends ensures 0 is off and 1023 is 100% full brightness
-    uint8_t newBrightness;
-    if (raw <= 3) {
-      newBrightness = 0;
-    } else if (raw >= 1020) {
-      newBrightness = 255;
+    uint8_t targetBrightness;
+    if (raw <= 4) {
+      targetBrightness = 0;
+    } else if (raw >= 1018) {
+      targetBrightness = 255;
     } else {
-      newBrightness = (uint8_t)(((uint32_t)raw * 255UL) / 1023UL);
+      targetBrightness = (uint8_t)(((uint32_t)raw * 255UL) / 1023UL);
     }
 
-    if (newBrightness != currentBrightness || force) {
-      currentBrightness = newBrightness;
-      FastLED.setBrightness(currentBrightness);
-      FastLED.show(); // Immediate visual response when turning brightness knob
+    // Apply hysteresis deadband (>= 2 counts) to eliminate wiper microphonic flicker
+    if (force || targetBrightness == 0 || targetBrightness == 255 ||
+        abs((int)targetBrightness - (int)currentBrightness) >= 2) {
+      if (targetBrightness != currentBrightness || force) {
+        currentBrightness = targetBrightness;
+        FastLED.setBrightness(currentBrightness);
+        return true;
+      }
     }
+    return false;
   }
 
   uint8_t getBrightness() const {

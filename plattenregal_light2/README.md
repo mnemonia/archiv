@@ -50,7 +50,7 @@ An Arduino-based lighting controller designed for vinyl record shelf (*Plattenre
              ▼                              ▼
  [NormalSmoothBreathingWarmWhite]   [SmoothRgbRainbowLowFrequencyWave]
  - Warm Candlelight White (~1900K)   - Low-Frequency Rainbow Wave (~12.5s)
- - Sinusoidal Breathing (~4.5s)      - 100% Saturated Pure Spectrum
+ - Sinusoidal Breathing (30s)        - 100% Saturated Pure Spectrum
  - 50 FPS Non-blocking               - 50 FPS Non-blocking
 ```
 
@@ -60,9 +60,10 @@ An Arduino-based lighting controller designed for vinyl record shelf (*Plattenre
   * Calibrated to `CRGB(255, 147, 41)` ($\sim 1900\,\text{K}$ candle flame / FastLED Candle standard).
   * The RGB channel ratios are scaled proportionally during breathing so the warm candlelight tone remains strictly constant throughout the entire breathing stroke.
 * **Breathing Dynamics**:
-  * **Period**: 4.5 seconds per breath cycle (`BREATH_PERIOD = 4500 ms`).
+  * **Period**: 30 seconds per breath cycle (`BREATH_PERIOD = 30000 ms`) for a deeply calming, slow respiration.
   * **Waveform**: Sinusoidal $\frac{1 - \cos(\theta)}{2}$ curve for organic respiration.
-  * **Range**: Oscillates smoothly between $35\%$ and $90\%$ of peak brightness, preserving an ambient warm glow without harsh shutoffs or power-rail bounce.
+  * **Range**: Oscillates smoothly between $30\%$ and $90\%$ of peak brightness, preserving an ambient warm glow without harsh shutoffs or power-rail bounce.
+  * **Flicker-Free Rendering**: Strip output is guarded against double-updates and only re-latched when rendered color or brightness changes, eliminating PWM phase-reset beat frequencies.
 * **Cadence**: 50 FPS (`UPDATE_INTERVAL = 20 ms`).
 
 ### Mode 2: `SmoothRgbRainbowLowFrequencyWave`
