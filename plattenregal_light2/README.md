@@ -12,12 +12,20 @@ An Arduino-based lighting controller designed for vinyl record shelf (*Plattenre
   * **Return row (B to A)**: LEDs `18 .. 35`.
   * **Vis-à-Vis Synchronization**: For every position $x$ along the shelf ($0 \le x < 18$), `leds[x]` and `leds[35 - x]` are synchronized to the identical color.
 * **Two Operating Modes**:
-  1. **`NormalSmoothBreathingWarmWhite`**: Calibrated $\sim 1900\,\text{K}$ warm candlelight white with organic, soothing sinusoidal breathing pulsation across all 36 LEDs.
+  1. **`NormalSmoothBreathingWarmWhite`**: Calibrated organic, soothing sinusoidal breathing pulsation across all 36 LEDs with real-time color selection.
   2. **`SmoothRgbRainbowLowFrequencyWave`**: Gentle, low-frequency traveling rainbow wave traversing the shelf, keeping opposing LEDs vis-à-vis in exact chromatic synchrony.
 * **2-State Digital Mode Switch (Pin 11)**: Selects between the two modes via a physical toggle switch or 2-position rotary switch.
-* **Master BrightnessController (Analog Pin A2)**:
-  * Dedicated potentiometer controlling overall strip luminosity from $0\%$ (off) to $100\%$ (full).
-  * **Strict Color Invariance Rule**: The brightness knob modulates luminosity only and has **no influence on the colors** set by the active mode.
+* **Dual-Section Potentiometer Control (Analog Pin A2)**:
+  * **$0^\circ \text{ to } 180^\circ$ (ADC $0 \dots 511$) — ColorController Section**:
+    * Step 1: Cold-White ($\sim 6500\,\text{K}$ crisp daylight white)
+    * Step 2: Warm-White ($\sim 1900\,\text{K}$ candlelight warm white)
+    * Steps 3..16: 14 distinct HUE steps across the $360^\circ$ chromatic spectrum
+  * **$180^\circ \text{ to } 360^\circ$ (ADC $512 \dots 1023$) — BrightnessController Section**:
+    * Dedicated potentiometer controlling overall strip luminosity from $0\%$ (off) to $100\%$ (full).
+    * When the knob is rotated in the $0^\circ\text{--}180^\circ$ color-selection zone, brightness remains locked at its active level so colors can be previewed without extinguishing the strip.
+* **Color Selection Protocol in `NormalSmoothBreathingWarmWhite`**:
+  * **High Brightness During Selection**: Rotating the knob while in the color-selection zone ($0^\circ\text{--}180^\circ$) automatically boosts the strip to high brightness ($100\%$) so colors are clearly visible and vibrant.
+  * **Color Accept Indication**: When the knob rests for $1000\,\text{ms}$ with no change, the color is accepted and confirmed with a crisp visual double-pulse animation on the strip before returning to master brightness and resuming calm breathing.
 * **Flicker-Free Design**:
   * Temporal dithering disabled (`FastLED.setDither(0)`) to eliminate high-frequency micro-flickering on SK6812 chips.
   * Analog input filtering with 4-sample oversampling, 3-count noise deadband, and Exponential Moving Average (EMA) smoothing to eliminate wiper jitter and rail-dip crosstalk.
@@ -58,14 +66,19 @@ An Arduino-based lighting controller designed for vinyl record shelf (*Plattenre
 ```
 
 ### Mode 1: `NormalSmoothBreathingWarmWhite`
-* **Visual Character**: Gentle, organic pulsation across all 18 LEDs in calibrated warm candlelight white.
-* **Color Calibration**:
-  * Calibrated to `CRGB(255, 147, 41)` ($\sim 1900\,\text{K}$ candle flame / FastLED Candle standard).
-  * The RGB channel ratios are scaled proportionally during breathing so the warm candlelight tone remains strictly constant throughout the entire breathing stroke.
+* **Visual Character**: Gentle, organic pulsation across all 36 LEDs with customizable color selection via the ColorController section ($0^\circ\text{--}180^\circ$).
+* **Color Selection Protocol**:
+  * **Default Color**: Step 2 Warm-White (`CRGB(255, 147, 41)` $\sim 1900\,\text{K}$ candle flame / FastLED Candle standard).
+  * **High-Brightness Real-Time Preview**: When the mode switch is on Mode 0 and the knob rotates in the $0^\circ\text{--}180^\circ$ zone, the strip automatically operates at maximum brightness ($255$) so the user can clearly preview and distinguish all colors across all 36 LEDs.
+  * **Visual Color Accept Indication**: When the knob rests for $1000\,\text{ms}$ without movement, the selected color is accepted. The strip confirms the acceptance with a crisp $400\,\text{ms}$ visual double-pulse animation (`blend(baseColor, CRGB::White, 160)`), then restores the user's master brightness setting and smoothly transitions into 30-second sinusoidal breathing in the new color.
+  * **16-Step Color Palette**:
+    * **Step 1**: Cold-White ($\sim 6500\,\text{K}$, `CRGB(230, 245, 255)`)
+    * **Step 2**: Warm-White ($\sim 1900\,\text{K}$ Candlelight, `CRGB(255, 147, 41)`)
+    * **Steps 3..16**: 14 HUE steps (Red, Deep Orange, Amber Gold, Yellow, Lime Green, Pure Green, Emerald Teal, Cyan, Ocean Blue, Royal Blue, Indigo, Violet/Purple, Magenta, Rose Pink).
 * **Breathing Dynamics**:
   * **Period**: 30 seconds per breath cycle (`BREATH_PERIOD = 30000 ms`) for a deeply calming, slow respiration.
   * **Waveform**: Sinusoidal $\frac{1 - \cos(\theta)}{2}$ curve for organic respiration.
-  * **Range**: Oscillates smoothly between $30\%$ and $90\%$ of peak brightness, preserving an ambient warm glow without harsh shutoffs or power-rail bounce.
+  * **Range**: Oscillates smoothly between $75\%$ and $100\%$ of brightness, preserving an ambient warm glow without harsh shutoffs.
   * **Flicker-Free Rendering**: Strip output is guarded against double-updates and only re-latched when rendered color or brightness changes, eliminating PWM phase-reset beat frequencies.
 * **Cadence**: 50 FPS (`UPDATE_INTERVAL = 20 ms`).
 
@@ -78,23 +91,27 @@ An Arduino-based lighting controller designed for vinyl record shelf (*Plattenre
   * **Temporal Frequency**: Full $360^\circ$ rainbow color rotation advances slowly at 50 FPS.
   * **Spatial Wave**: The full $360^\circ$ rainbow color cycle is stretched across $8 \times \text{NUM\_LEDS\_ROW}$ (144 LEDs, increased by factor 4 over earlier $2 \times \text{NUM\_LEDS\_ROW}$), spreading each color broadly so that adjacent LEDs along the shelf shift by only $\approx 1.77$ hue units for an ultra-subtle, serene monochromatic gradient.
   * **Vivid Spectrum**: Pixels are rendered at full saturation and value (`CHSV(pixelHue, 255, 255)`).
-  * **Brightness Independence**: Master luminosity is governed purely by the `BrightnessController` on Pin A2, keeping colors pure and unshifted.
+  * **Brightness Independence**: Master luminosity is governed purely by the `BrightnessController` in the $180^\circ\text{--}360^\circ$ zone on Pin A2, keeping colors pure and unshifted.
 * **Cadence**: 50 FPS (`UPDATE_INTERVAL = 20 ms`).
 
 ---
 
-## 4. Global BrightnessController (Pin A2)
+## 4. Dual-Section Potentiometer Control (Pin A2)
 
-* **Independent Operation**: Modulates the FastLED master scale factor via `FastLED.setBrightness()`.
-* **Zero Color Distortion**:
-  * Scaling is applied globally during hardware signal transmission.
+* **Split Dial Zones**:
+  * **$0^\circ \text{ to } 180^\circ$ (ADC $0 \dots 511$) — ColorController Section**:
+    * Governs color selection in `NormalSmoothBreathingWarmWhite` across 16 stepped slots (Cold-White, Warm-White, 14 HUE steps).
+    * Brightness remains held constant at its last adjusted level.
+  * **$180^\circ \text{ to } 360^\circ$ (ADC $512 \dots 1023$) — BrightnessController Section**:
+    * Governs master luminosity from $0\%$ (off) to $100\%$ (full) across both modes.
+* **Zero Color Distortion in Brightness Section**:
+  * Scaling is applied globally during hardware signal transmission via `FastLED.setBrightness()`.
   * Color values in the animation buffer are never altered or clamped by brightness adjustments.
-  * Warm white remains true warm white; rainbow hues remain vibrant and saturated at all brightness levels.
 * **Noise Suppression & Anti-Flicker**:
   * **4-Sample ADC Oversampling**: Averages ADC samples to cancel high-frequency electrical noise.
   * **3-Count Deadband**: Rejects wiper microphonics and minor voltage fluctuations.
   * **Exponential Moving Average (EMA)**: Applies a smooth filter ($\frac{3 \times \text{filtered} + \text{raw}}{4}$) for an analog, weighted feel.
-  * **Full End-Stop Clamping**: Raw values $\le 3$ cleanly turn the LEDs off ($0$); raw values $\ge 1020$ reach maximum brightness ($255$).
+  * **Full End-Stop Clamping**: Raw values $\le 516$ cleanly turn the LEDs off ($0$); raw values $\ge 1018$ reach maximum brightness ($255$).
 
 ---
 
