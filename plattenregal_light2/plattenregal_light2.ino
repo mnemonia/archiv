@@ -4,7 +4,7 @@
  * ============================================================================
  *
  * Target: Arduino Uno / Nano / Pro Mini / compatible (ATmega328P or higher)
- * LED Strip: SK6812 RGB (18 LEDs)
+ * LED Strip: SK6812 RGB (36 LEDs: 18 LEDs A->B and 18 LEDs B->A vis-a-vis synchronized)
  * FastLED Library: Used for hardware driving, timing, and global brightness scaling
  *
  * Hardware Controls:
@@ -34,9 +34,13 @@
 
 // ============================================================================
 // Hardware Pin & LED Strip Configuration
+// Dual 18-LED row configuration (36 LEDs total):
+//   - Forward row: A to B (LED indices 0 .. 17)
+//   - Return row:  B to A (LED indices 18 .. 35)
 // ============================================================================
 #define LED_PIN               6     // Data input pin for the SK6812 strip (via 330-470 Ohm resistor)
-#define NUM_LEDS              18    // Total number of SK6812 RGB LEDs
+#define NUM_LEDS_ROW          18    // Number of LEDs along one direction (A to B, or B to A)
+#define NUM_LEDS              (2 * NUM_LEDS_ROW) // Total number of SK6812 RGB LEDs (36 LEDs)
 
 // Digital 2-Position Mode Switch (Pin 11 with INPUT_PULLUP, switch terminal to GND)
 #define PIN_MODE_SWITCH       11
@@ -69,7 +73,7 @@ public:
 
 // ============================================================================
 // Mode 1: NormalSmoothBreathingWarmWhite
-// Organic, tranquil breathing pulsation across all 18 LEDs in calibrated warm candlelight white.
+// Organic, tranquil breathing pulsation across all 36 LEDs in calibrated warm candlelight white.
 // Color is locked to ~1900K warm candlelight white (CRGB(255, 147, 41)).
 // ============================================================================
 class NormalSmoothBreathingWarmWhite : public LightMode {
@@ -80,13 +84,13 @@ private:
 
   // Breathing depth: oscillates subtly between 30% and 90% of brightness
   // to maintain an ambient warm glow without harsh shutoffs or power-rail bounce
-  const float MIN_FACTOR = 0.50f;
+  const float MIN_FACTOR = 0.75f;
   const float MAX_FACTOR = 1.00f;
 
   // Calibrated warm candlelight white (~1900K candle flame tone / FastLED Candle standard)
   // R:G:B ratios produce a rich, cozy, golden-amber candle glow while preserving white luminance
   const CRGB WARM_WHITE = CRGB(255, 147, 41);
-
+  
   CRGB lastDisplayedColor;
   uint8_t lastBrightness;
   bool firstFrame;
@@ -146,10 +150,12 @@ public:
 
 // ============================================================================
 // Mode 2: SmoothRgbRainbowLowFrequencyWave
-// Gentle, low-frequency traveling rainbow wave across the 18 LEDs.
-// Hue advances slowly over ~12.5 seconds, producing a tranquil ambient wave.
-// The rainbow wave is stretched across 8 * NUM_LEDS (144 LEDs, increased by
-// a factor of 4 over the previous 2 * NUM_LEDS), allowing colors to spread out
+// Gentle, low-frequency traveling rainbow wave across the dual 18-LED rows (36 LEDs).
+// The strip goes from A to B (LEDs 0..17) and returns from B to A (LEDs 18..35).
+// Both strips are synchronized so that each LED vis-a-vis has the exact same color value.
+// Hue advances slowly, producing a tranquil ambient wave.
+// The rainbow wave is stretched across 8 * NUM_LEDS_ROW (144 LEDs, increased by
+// a factor of 4 over the previous 2 * NUM_LEDS_ROW), allowing colors to spread out
 // broadly across the entire shelf with subtle, monochromatic-gradient transitions.
 // Colors are generated at 100% saturation and value (CHSV(hue, 255, 255)),
 // leaving luminosity control strictly to the global BrightnessController.
@@ -160,13 +166,13 @@ private:
   const unsigned long UPDATE_INTERVAL = 20;   // 50 FPS smooth rainbow motion
   uint16_t hueAccumulator;
 
-  // At 50 FPS (20ms interval), advancing by 105 per frame:
-  // 65536 / 105 ≈ 624 frames -> 624 * 20ms ≈ 12.5s per full 360° rainbow rotation.
+  // At 50 FPS (20ms interval), advancing by 10 per frame:
+  // 65536 / 10 ≈ 6553 frames -> 6553 * 20ms ≈ 131s per full 360° rainbow rotation.
   const uint16_t HUE_INCREMENT = 10;//105;
 
   // Spatial color spread factor:
-  // Stretched by factor 4 over previous 2*NUM_LEDS -> 8 * NUM_LEDS (144 LEDs).
-  // (Set to 4 if 4*NUM_LEDS total spread is preferred).
+  // Stretched by factor 4 over previous 2*NUM_LEDS_ROW -> 8 * NUM_LEDS_ROW (144 LEDs).
+  // (Set to 4 if 4*NUM_LEDS_ROW total spread is preferred).
   const uint8_t COLOR_SPREAD_FACTOR = 8;
 
 public:
@@ -192,10 +198,19 @@ public:
     hueAccumulator += HUE_INCREMENT;
     uint8_t baseHue = (uint8_t)(hueAccumulator >> 8);
 
-    // Stretched spatial rainbow wave: full 360° color cycle spans COLOR_SPREAD_FACTOR * NUM_LEDS
-    for (uint8_t i = 0; i < NUM_LEDS; i++) {
-      uint8_t pixelHue = baseHue + (uint8_t)(((uint32_t)i * 256UL) / ((uint32_t)COLOR_SPREAD_FACTOR * NUM_LEDS));
-      leds[i] = CHSV(pixelHue, 255, 255);
+    // Stretched spatial rainbow wave across the shelf (A to B):
+    // Full 360° color cycle spans COLOR_SPREAD_FACTOR * NUM_LEDS_ROW.
+    // The strip runs A to B (indices 0..17) and returns B to A (indices 18..35).
+    // Both strips are synchronized: each LED vis-a-vis has the exact same color value.
+    for (uint8_t x = 0; x < NUM_LEDS_ROW; x++) {
+      uint8_t pixelHue = baseHue + (uint8_t)(((uint32_t)x * 256UL) / ((uint32_t)COLOR_SPREAD_FACTOR * NUM_LEDS_ROW));
+      CRGB color = CHSV(pixelHue, 255, 255);
+
+      // Forward strip: A to B (indices 0 .. 17)
+      leds[x] = color;
+
+      // Return strip: B to A (indices 18 .. 35), vis-a-vis with forward strip
+      leds[(2 * NUM_LEDS_ROW - 1) - x] = color;
     }
     FastLED.show();
   }
