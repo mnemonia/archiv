@@ -19,23 +19,33 @@
  * Modes:
  *   1. NormalPulsingWarmWhite:
  *        Cozy ambient light with a gentle, meditative low-frequency sinusoidal
- *        breathing pulse across the entire frame. Includes dynamic color selection
- *        via potentiometer on Analog Pin A3 (0° to 360° rotation):
- *          -   0° to 180°: Full 360-degree chromatic RGB color selection.
- *          - 180° to 270°: Curated designer tones (nice-blue, nice-red, nice-purple).
- *          - 270° to 360°: Continuous CCT tunable white (cold-white to warm-white).
+ *        breathing pulse across the entire frame. Features Dual-Section Potentiometer
+ *        Control on Analog Pin A3:
+ *          -   0° to 180° (ADC   0 ..  511): ColorController section
+ *              * Step 1: Cold-White (~6500K crisp daylight white)
+ *              * Step 2: Warm-White (~1900K candlelight warm white)
+ *              * Steps 3..16: 14 distinct HUE steps across the 360° spectrum
+ *              * Selection Protocol: Rotation triggers real-time preview across
+ *                all 350 LEDs at high brightness (255). Holding stable for 1000ms
+ *                commits the color, followed by a 400ms visual confirmation double-pulse.
+ *          - 180° to 360° (ADC 512 .. 1023): BrightnessController section
+ *              * Smooth master brightness adjustment from 0% to 100%.
+ *              * While in the 0°..180° color zone, brightness remains locked at active level.
  *   2. ConcertSmoothRGBBreath:
  *        Synchronized planar wave moving through the 2.36m x 0.55m rectangle.
  *        Color and wave on Edge 0 (Bottom) and Edge 2 (Top) are matched on
- *        the LEDs vis-a-vis each other across the frame.
+ *        the LEDs vis-a-vis each other across the frame. Potentiometer exclusively
+ *        controls master brightness (0° to 360° / ADC 0 .. 1023 -> 0% to 100%).
  *   3. PartyHUEMeteorSparkle:
  *        High-energy party spectacle with dynamic meteors and starlight sparkles.
  *        Cycles through three HUE background behaviors ("SmoothHUETransition",
  *        "RawPoliceAlarmLights", and "Supernova") stepped through in random order
  *        and random durations. Each meteor is assigned an independent stable
  *        random color with a smooth disappearing tail, unaffected by background behavior.
+ *        Potentiometer exclusively controls master brightness (0° to 360° / ADC 0 .. 1023 -> 0% to 100%).
  *   4. PartyMeteorSparkle (Legacy):
  *        Classic multi-meteor perimeter chase with fading comet tails and sparkles.
+ *        Potentiometer exclusively controls master brightness.
  *
  * Initial State:
  *   - Boots initially into "NormalPulsingWarmWhite".
@@ -162,7 +172,7 @@ class LightState {
 public:
   virtual ~LightState() {}
   virtual ModeId getId() const = 0;
-  virtual const char* getName() const = 0;
+  virtual const __FlashStringHelper* getName() const = 0;
   virtual void enter(LightContext* ctx) {}
   virtual void update(LightContext* ctx, unsigned long currentMillis) = 0;
 };
@@ -203,133 +213,375 @@ public:
 };
 
 // ============================================================================
-// 5. Mode 1: NormalPulsingWarmWhite
-// Ambient lighting with a gentle sinusoidal breathing pulse.
-// Incorporates an analog potentiometer on Pin A3 for continuous color selection:
-//   -   0° to 180° (ADC   0 .. 511): Full chromatic RGB rainbow spectrum
-//   - 180° to 270° (ADC 512 .. 767): Curated designer tones (nice-blue, nice-red, nice-purple)
-//   - 270° to 360° (ADC 768 .. 1023): Tunable white (cold-white to warm-white)
+// 5. Dual-Section Potentiometer Control (Pin A3)
 // ============================================================================
-class NormalPulsingWarmWhiteState : public LightState {
+
+// ----------------------------------------------------------------------------
+// ColorController Class (Analog Pin A3, 0° to 180° / ADC 0 .. 511)
+// Maps the first 180° of potentiometer rotation into 16 distinct color steps:
+//   - Step 1: Cold-White (~6500K crisp daylight white)
+//   - Step 2: Warm-White (~1900K candlelight warm white)
+//   - Steps 3..16: 14 distinct HUE steps across the 360° chromatic spectrum
+// ----------------------------------------------------------------------------
+class ColorController {
+public:
+  static const uint8_t NUM_STEPS = 16;
+
+  static bool isInColorZone(int rawAdc) {
+    return (rawAdc >= 0 && rawAdc < 512);
+  }
+
+  static uint8_t rawToStep(int rawAdc) {
+    int clamped = constrain(rawAdc, 0, 511);
+    uint8_t step = (uint8_t)(clamped / 32); // 16 steps of 32 ADC counts each (0 .. 15)
+    if (step >= NUM_STEPS) step = NUM_STEPS - 1;
+    return step;
+  }
+
+  static CRGB getColorForStep(uint8_t step) {
+    switch (step) {
+      case 0:  return CRGB(230, 245, 255); // Step 1: Cold-White (~6500K crisp daylight white)
+      case 1:  return CRGB(255, 147, 41);  // Step 2: Warm-White (~1900K candlelight white)
+      case 2:  return CHSV(0, 255, 255);   // Step 3: Red
+      case 3:  return CHSV(16, 255, 255);  // Step 4: Deep Orange
+      case 4:  return CHSV(32, 255, 255);  // Step 5: Amber Gold
+      case 5:  return CHSV(48, 255, 255);  // Step 6: Yellow
+      case 6:  return CHSV(72, 255, 255);  // Step 7: Lime Green
+      case 7:  return CHSV(96, 255, 255);  // Step 8: Pure Green
+      case 8:  return CHSV(116, 255, 255); // Step 9: Emerald Teal
+      case 9:  return CHSV(136, 255, 255); // Step 10: Cyan
+      case 10: return CHSV(156, 255, 255); // Step 11: Ocean Blue
+      case 11: return CHSV(176, 255, 255); // Step 12: Royal Blue
+      case 12: return CHSV(196, 255, 255); // Step 13: Indigo
+      case 13: return CHSV(216, 255, 255); // Step 14: Violet / Purple
+      case 14: return CHSV(232, 255, 255); // Step 15: Magenta
+      case 15: return CHSV(246, 255, 255); // Step 16: Rose Pink
+      default: return CRGB(255, 147, 41);
+    }
+  }
+
+  static const __FlashStringHelper* getStepName(uint8_t step) {
+    switch (step) {
+      case 0:  return F("Step 1: Cold-White (~6500K)");
+      case 1:  return F("Step 2: Warm-White (~1900K Candlelight)");
+      case 2:  return F("Step 3: Red");
+      case 3:  return F("Step 4: Deep Orange");
+      case 4:  return F("Step 5: Amber Gold");
+      case 5:  return F("Step 6: Yellow");
+      case 6:  return F("Step 7: Lime Green");
+      case 7:  return F("Step 8: Pure Green");
+      case 8:  return F("Step 9: Emerald Teal");
+      case 9:  return F("Step 10: Cyan");
+      case 10: return F("Step 11: Ocean Blue");
+      case 11: return F("Step 12: Royal Blue");
+      case 12: return F("Step 13: Indigo");
+      case 13: return F("Step 14: Violet / Purple");
+      case 14: return F("Step 15: Magenta");
+      case 15: return F("Step 16: Rose Pink");
+      default: return F("Unknown Step");
+    }
+  }
+};
+
+// ----------------------------------------------------------------------------
+// BrightnessController Class (Analog Pin A3)
+// Governs master luminosity:
+//   - In NormalPulsingWarmWhite: 180° to 360° (ADC 512 .. 1023) controls brightness;
+//     below 512 is the ColorController section (brightness locked at active level).
+//   - In ConcertSmoothRGBBreath & PartyHUEMeteorSparkle: full 0° to 360° dial
+//     (ADC 0 .. 1023) smoothly controls brightness from 0% to 100%.
+// ----------------------------------------------------------------------------
+class BrightnessController {
 private:
-  unsigned long lastUpdateMillis = 0;
-  const unsigned long UPDATE_INTERVAL = 25; // 40 FPS smooth breathing
-  const unsigned long PULSE_PERIOD = 4500;   // 4.5 seconds full breath cycle
+  uint8_t pin;
+  static const unsigned long SAMPLE_INTERVAL = 25;
+  unsigned long lastCheckMillis;
+  int filteredRaw;
+  int lastRaw;
+  uint8_t currentBrightness;
 
-  // Potentiometer reading & smoothing on Pin A3
-  int filteredPotRaw = 1023; // Boot defaults to warm-white (1023)
-  int lastPotRaw     = -1;
-
-  // Gentle breathing range: sways between 40% and 85% brightness
-  const float MIN_FACTOR = 0.40f;
-  const float MAX_FACTOR = 0.85f;
-
-  // Stable 4-sample analog read with deadband and EMA filtering to eliminate noise/flicker
-  int readPotStable() {
+  int readFilteredRaw() {
     int sum = 0;
     for (uint8_t i = 0; i < 4; i++) {
-      sum += analogRead(PIN_COLOR_POT);
+      sum += analogRead(pin);
     }
     int raw = sum >> 2;
 
-    if (lastPotRaw < 0) {
-      lastPotRaw = raw;
-      filteredPotRaw = raw;
+    if (lastRaw < 0) {
+      lastRaw = raw;
+      filteredRaw = raw;
     } else {
-      // 2-count deadband to absorb standard electrical noise
-      if (abs(raw - lastPotRaw) > 2) {
-        lastPotRaw = raw;
-      }
-      // Smooth exponential filter (EMA)
-      filteredPotRaw = (filteredPotRaw * 3 + lastPotRaw) / 4;
-    }
-    return filteredPotRaw;
-  }
-
-  // Calculate base color from potentiometer rotation angle (0° to 360°)
-  CRGB calculatePotColor(int rawAdc) {
-    // ------------------------------------------------------------------------
-    // Zone 1: 0° to 180° (ADC 0 .. 511) -> Full RGB Color Selection
-    // 16-bit hue interpolation across full 360° rainbow with sub-step blending
-    // ------------------------------------------------------------------------
-    if (rawAdc <= 511) {
-      uint16_t hue16 = (uint16_t)(((uint32_t)rawAdc * 65535UL) / 511UL);
-      uint8_t h1 = (uint8_t)(hue16 >> 8);
-      uint8_t frac = (uint8_t)(hue16 & 0xFF);
-      CRGB c1, c2;
-      hsv2rgb_rainbow(CHSV(h1, 255, 255), c1);
-      hsv2rgb_rainbow(CHSV((uint8_t)(h1 + 1), 255, 255), c2);
-      return blend(c1, c2, frac);
-    }
-    // ------------------------------------------------------------------------
-    // Zone 2: 180° to 270° (ADC 512 .. 767) -> nice-blue, nice-red, nice-purple
-    // Continuous blend through curated luxury tones
-    // ------------------------------------------------------------------------
-    else if (rawAdc <= 767) {
-      const CRGB NICE_BLUE(10, 95, 255);    // Luminous royal sapphire blue
-      const CRGB NICE_RED(255, 20, 30);     // Warm vibrant ruby red
-      const CRGB NICE_PURPLE(175, 25, 240); // Deep royal amethyst purple
-
-      int offset = rawAdc - 512; // 0 .. 255
-      // 180° to 225° (ADC 512 .. 639): nice-blue to nice-red
-      if (offset < 128) {
-        uint8_t frac = (uint8_t)(((uint16_t)offset * 255U) / 127U);
-        return blend(NICE_BLUE, NICE_RED, frac);
-      }
-      // 225° to 270° (ADC 640 .. 767): nice-red to nice-purple
-      else {
-        uint8_t frac = (uint8_t)(((uint16_t)(offset - 128) * 255U) / 127U);
-        return blend(NICE_RED, NICE_PURPLE, frac);
+      // 4-count deadband to absorb wiper electrical/thermal noise
+      if (abs(raw - lastRaw) > 3) {
+        lastRaw = raw;
+        // Smooth exponential moving average: 75% historical + 25% new sample
+        filteredRaw = (filteredRaw * 3 + lastRaw) / 4;
       }
     }
-    // ------------------------------------------------------------------------
-    // Zone 3: 270° to 360° (ADC 768 .. 1023) -> cold-white to warm-white
-    // Continuous CCT correlated color temperature transition
-    // ------------------------------------------------------------------------
-    else {
-      const CRGB COLD_WHITE(225, 240, 255); // Crisp daylight cold white (~6500K)
-      const CRGB WARM_WHITE(255, 145, 35);  // Cozy incandescent warm white (~2700K)
-
-      int offset = rawAdc - 768; // 0 .. 255
-      uint8_t frac = (uint8_t)offset;
-      return blend(COLD_WHITE, WARM_WHITE, frac);
-    }
+    return filteredRaw;
   }
 
 public:
+  BrightnessController(uint8_t analogPin, uint8_t initialBrightness = 180)
+    : pin(analogPin),
+      lastCheckMillis(0),
+      filteredRaw(-1),
+      lastRaw(-1),
+      currentBrightness(initialBrightness) {}
+
+  void begin() {
+    pinMode(pin, INPUT);
+    readFilteredRaw();
+    if (filteredRaw >= 512) {
+      if (filteredRaw <= 516) currentBrightness = 0;
+      else if (filteredRaw >= 1018) currentBrightness = 255;
+      else currentBrightness = (uint8_t)(((uint32_t)(filteredRaw - 516) * 255UL) / (1018UL - 516UL));
+    }
+    FastLED.setBrightness(currentBrightness);
+  }
+
+  bool update(unsigned long currentMillis, ModeId activeMode, bool force = false) {
+    if (!force && (currentMillis - lastCheckMillis < SAMPLE_INTERVAL)) return false;
+    lastCheckMillis = currentMillis;
+
+    int raw = readFilteredRaw();
+
+    uint8_t targetBrightness;
+    if (activeMode == MODE_NORMAL_PULSING_WARM_WHITE) {
+      // Section 180° to 360° (ADC 512 .. 1023) controls Brightness
+      // Below 512 is the ColorController section (brightness remains constant)
+      if (raw < 512) {
+        return false;
+      }
+      if (raw <= 516) {
+        targetBrightness = 0;
+      } else if (raw >= 1018) {
+        targetBrightness = 255;
+      } else {
+        targetBrightness = (uint8_t)(((uint32_t)(raw - 516) * 255UL) / (1018UL - 516UL));
+      }
+    } else {
+      // In Concert and Party modes: Entire 0° to 360° range (ADC 0 .. 1023) controls brightness
+      if (raw <= 4) {
+        targetBrightness = 0;
+      } else if (raw >= 1018) {
+        targetBrightness = 255;
+      } else {
+        targetBrightness = (uint8_t)(((uint32_t)(raw - 4) * 255UL) / (1018UL - 4UL));
+      }
+    }
+
+    if (force || targetBrightness == 0 || targetBrightness == 255 ||
+        abs((int)targetBrightness - (int)currentBrightness) >= 2) {
+      if (targetBrightness != currentBrightness || force) {
+        currentBrightness = targetBrightness;
+        FastLED.setBrightness(currentBrightness);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  uint8_t getBrightness() const {
+    return currentBrightness;
+  }
+
+  int getRawValue() const {
+    return filteredRaw;
+  }
+};
+
+extern BrightnessController brightnessController;
+
+// ============================================================================
+// 6. Mode 1: NormalPulsingWarmWhite
+// Ambient lighting with a gentle sinusoidal breathing pulse across all 350 LEDs.
+// Supports real-time color selection via the ColorController section (0° to 180°).
+// Selection protocol:
+//   - Mode NormalPulsingWarmWhite is active.
+//   - Knob in color-selection zone (0° to 180° / ADC 0 .. 511).
+//   - Rotation changes the color (real-time preview across all 350 LEDs at high brightness).
+//   - In case 1000ms no change, this color is set as the active breathing color and indicated
+//     with a visual confirmation double-pulse on the strip.
+// ============================================================================
+class NormalPulsingWarmWhiteState : public LightState {
+private:
+  enum ColorSelectState {
+    COLOR_STATE_NORMAL_BREATHING,
+    COLOR_STATE_PREVIEW_HIGH_BRIGHTNESS,
+    COLOR_STATE_ACCEPT_INDICATION
+  };
+
+  BrightnessController& brightnessCtrl;
+  unsigned long lastUpdateMillis = 0;
+  static const unsigned long UPDATE_INTERVAL = 25; // 40 FPS smooth breathing
+  static const unsigned long PULSE_PERIOD    = 4500; // 4.5 seconds full breath cycle
+  static const unsigned long ACCEPT_DURATION = 400;  // 400ms visual confirmation indication
+  static const uint8_t HIGH_SELECTION_BRIGHTNESS = 255;
+
+  // Active base color (defaults to Step 2: Warm-White CRGB(255, 147, 41))
+  CRGB baseColor;
+
+  // Color selection protocol state
+  ColorSelectState colorState;
+  CRGB previewColor;
+  uint8_t lastObservedStep;
+  int lastObservedRaw;
+  unsigned long lastColorChangeMillis;
+  unsigned long acceptStartTime;
+
+public:
+  NormalPulsingWarmWhiteState(BrightnessController& bc)
+    : brightnessCtrl(bc),
+      lastUpdateMillis(0),
+      baseColor(CRGB(255, 147, 41)), // Default: Step 2 Warm-White (~1900K candlelight flame)
+      colorState(COLOR_STATE_NORMAL_BREATHING),
+      previewColor(CRGB(255, 147, 41)),
+      lastObservedStep(255),
+      lastObservedRaw(-1),
+      lastColorChangeMillis(0),
+      acceptStartTime(0) {}
+
   ModeId getId() const override { return MODE_NORMAL_PULSING_WARM_WHITE; }
-  const char* getName() const override { return "NormalPulsingWarmWhite"; }
+  const __FlashStringHelper* getName() const override { return F("NormalPulsingWarmWhite"); }
 
   void enter(LightContext* ctx) override {
     FastLED.setDither(0);
-    FastLED.setBrightness(180);
+    FastLED.setBrightness(brightnessCtrl.getBrightness());
     lastUpdateMillis = 0;
-    lastPotRaw = -1; // Reset to immediately read current physical potentiometer position
+    colorState = COLOR_STATE_NORMAL_BREATHING;
+    lastObservedStep = 255;
+    lastObservedRaw = -1;
+  }
+
+  void setBaseColor(const CRGB& color) {
+    baseColor = color;
+  }
+
+  CRGB getBaseColor() const {
+    return baseColor;
   }
 
   void update(LightContext* ctx, unsigned long currentMillis) override {
     if (currentMillis - lastUpdateMillis < UPDATE_INTERVAL) return;
     lastUpdateMillis = currentMillis;
 
-    // 1. Read potentiometer on A3 with anti-flicker smoothing and calculate base color
-    int potVal = readPotStable();
-    CRGB baseColor = calculatePotColor(potVal);
+    int raw = brightnessCtrl.getRawValue();
 
-    // 2. Smooth low-frequency sine wave modulation (0.0 to 1.0)
-    float phase = (float)(currentMillis % PULSE_PERIOD) / (float)PULSE_PERIOD;
-    float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
+    // ------------------------------------------------------------------------
+    // 1. Color Accept Confirmation Indication
+    // ------------------------------------------------------------------------
+    if (colorState == COLOR_STATE_ACCEPT_INDICATION) {
+      unsigned long elapsed = currentMillis - acceptStartTime;
+      if (elapsed < ACCEPT_DURATION) {
+        // Crisp double-pulse visual confirmation:
+        // 0..80ms: Dim (10% intensity dip)
+        // 80..180ms: Flash Bright (accepted color with brilliant white highlight)
+        // 180..260ms: Dim (10% intensity dip)
+        // 260..360ms: Flash Bright (accepted color with brilliant white highlight)
+        // 360..400ms: Settle into accepted color
+        bool isFlashPhase = (elapsed >= 80 && elapsed < 180) || (elapsed >= 260 && elapsed < 360);
+        CRGB frameColor;
+        if (isFlashPhase) {
+          frameColor = blend(baseColor, CRGB::White, 160); // Dazzling bright confirmation flash
+        } else {
+          frameColor = baseColor;
+          frameColor.nscale8_video(30); // Contrast dip
+        }
 
-    // 3. Scale smoothly within breathing bounds (MIN_FACTOR to MAX_FACTOR)
-    float factor = MIN_FACTOR + wave * (MAX_FACTOR - MIN_FACTOR);
+        fill_solid(leds, NUM_LEDS, frameColor);
+        FastLED.show();
+        return;
+      } else {
+        // Confirmation animation complete -> return to normal breathing at master brightness
+        colorState = COLOR_STATE_NORMAL_BREATHING;
+        FastLED.setBrightness(brightnessCtrl.getBrightness());
+      }
+    }
 
-    CRGB pulseColor(
-      (uint8_t)(baseColor.r * factor),
-      (uint8_t)(baseColor.g * factor),
-      (uint8_t)(baseColor.b * factor)
-    );
+    // ------------------------------------------------------------------------
+    // 2. Color Selection Protocol:
+    // When knob is in color-selection zone (0° to 180° / ADC 0 .. 511):
+    // Rotation changes the color (real-time preview across all 350 LEDs at high brightness).
+    // In case 1000ms no change, this color is set as active color and confirmed.
+    // ------------------------------------------------------------------------
+    if (ColorController::isInColorZone(raw)) {
+      uint8_t step = ColorController::rawToStep(raw);
 
-    fill_solid(leds, NUM_LEDS, pulseColor);
-    FastLED.show();
+      if (lastObservedStep == 255) {
+        // Initial sample upon entering color zone
+        lastObservedStep = step;
+        lastObservedRaw = raw;
+      } else if (step != lastObservedStep || (colorState == COLOR_STATE_PREVIEW_HIGH_BRIGHTNESS && abs(raw - lastObservedRaw) > 3)) {
+        // Rotation detected!
+        if (step != lastObservedStep) {
+          lastObservedStep = step;
+          previewColor = ColorController::getColorForStep(step);
+          Serial.print(F("[Color Preview (High Brightness)] "));
+          Serial.println(ColorController::getStepName(step));
+        }
+        lastObservedRaw = raw;
+        lastColorChangeMillis = currentMillis;
+
+        if (colorState != COLOR_STATE_PREVIEW_HIGH_BRIGHTNESS) {
+          colorState = COLOR_STATE_PREVIEW_HIGH_BRIGHTNESS;
+          // Ensure high brightness during color selection
+          FastLED.setBrightness(HIGH_SELECTION_BRIGHTNESS);
+        }
+      }
+
+      if (colorState == COLOR_STATE_PREVIEW_HIGH_BRIGHTNESS) {
+        // If 1000ms elapse without change -> accept color and indicate confirmation
+        if (currentMillis - lastColorChangeMillis >= 1000) {
+          baseColor = previewColor;
+          colorState = COLOR_STATE_ACCEPT_INDICATION;
+          acceptStartTime = currentMillis;
+
+          Serial.println(F("========================================"));
+          Serial.print(F("[Color Accepted] Active color COMMITTED to: "));
+          Serial.println(ColorController::getStepName(lastObservedStep));
+          Serial.println(F("[Color Accepted] Visual confirmation indication triggered!"));
+          Serial.println(F("========================================"));
+          return;
+        }
+      }
+    } else {
+      // Knob is in BrightnessController section (180° to 360° / ADC 512 .. 1023)
+      if (colorState == COLOR_STATE_PREVIEW_HIGH_BRIGHTNESS) {
+        // Exited color zone before 1000ms elapsed -> cancel preview, restore master brightness
+        colorState = COLOR_STATE_NORMAL_BREATHING;
+        FastLED.setBrightness(brightnessCtrl.getBrightness());
+        Serial.println(F("[Color Selection] Exited color zone -> Kept previously set color."));
+      }
+      lastObservedStep = 255;
+      lastObservedRaw = -1;
+    }
+
+    // ------------------------------------------------------------------------
+    // 3. Render to LED Strip:
+    // If previewing -> Solid real-time preview of selected color across all 350 LEDs
+    // Otherwise -> Gentle sinusoidal breathing pulsation in active baseColor
+    // ------------------------------------------------------------------------
+    if (colorState == COLOR_STATE_PREVIEW_HIGH_BRIGHTNESS) {
+      fill_solid(leds, NUM_LEDS, previewColor);
+      FastLED.show();
+    } else {
+      // Smooth low-frequency sine wave modulation (0.0 to 1.0)
+      float phase = (float)(currentMillis % PULSE_PERIOD) / (float)PULSE_PERIOD;
+      float wave = (sin(phase * 2.0f * PI) + 1.0f) * 0.5f;
+
+      // Scale smoothly within breathing bounds (40% to 85%)
+      float factor = 0.40f + wave * (0.85f - 0.40f);
+
+      CRGB pulseColor(
+        (uint8_t)(baseColor.r * factor + 0.5f),
+        (uint8_t)(baseColor.g * factor + 0.5f),
+        (uint8_t)(baseColor.b * factor + 0.5f)
+      );
+
+      fill_solid(leds, NUM_LEDS, pulseColor);
+      FastLED.show();
+    }
   }
 };
 
@@ -344,22 +596,20 @@ public:
 class ConcertSmoothRGBBreathState : public LightState {
 private:
   unsigned long lastUpdateMillis = 0;
-  const unsigned long UPDATE_INTERVAL = 25; // 40 FPS rock-solid update interval
-
-  // Ultra-slow, serene timing constants
-  const unsigned long COLOR_ROTATION_PERIOD_MS = 300000UL; // 300 seconds (5 min) full RGB rotation
-  const unsigned long WAVE_PERIOD_MS           = 10000UL;  // 10.0 seconds to glide across 2.36m plane
-  const unsigned long BREATH_PERIOD_MS         = 8000UL;   // 8.0 seconds gentle respiratory breath cycle
+  static const unsigned long UPDATE_INTERVAL           = 25;       // 40 FPS rock-solid update interval
+  static const unsigned long COLOR_ROTATION_PERIOD_MS  = 300000UL; // 300 seconds (5 min) full RGB rotation
+  static const unsigned long WAVE_PERIOD_MS            = 10000UL;  // 10.0 seconds to glide across 2.36m plane
+  static const unsigned long BREATH_PERIOD_MS          = 8000UL;   // 8.0 seconds gentle respiratory breath cycle
 
 public:
   ModeId getId() const override { return MODE_CONCERT_SMOOTH_RGB_BREATH; }
-  const char* getName() const override { return "ConcertSmoothRGBBreath"; }
+  const __FlashStringHelper* getName() const override { return F("ConcertSmoothRGBBreath"); }
 
   void enter(LightContext* ctx) override {
     // Disable temporal dithering to prevent high-frequency shimmer/flicker
     FastLED.setDither(0);
-    // Set a steady, calibrated brightness ceiling (prevents voltage sag & power-limiter hunting)
-    FastLED.setBrightness(180);
+    // Apply global potentiometer brightness
+    FastLED.setBrightness(brightnessController.getBrightness());
     lastUpdateMillis = 0;
   }
 
@@ -427,19 +677,19 @@ public:
 class PartyMeteorSparkleState : public LightState {
 private:
   unsigned long lastUpdateMillis = 0;
-  const unsigned long UPDATE_INTERVAL = 18; // ~55 FPS energetic movement
-  const uint8_t METEOR_COUNT = 3;            // 3 meteors spaced along perimeter
-  const uint8_t FADE_DECAY = 50;             // Trail decay factor (higher = shorter tail)
+  static const unsigned long UPDATE_INTERVAL = 18; // ~55 FPS energetic movement
+  static const uint8_t METEOR_COUNT          = 3;  // 3 meteors spaced along perimeter
+  static const uint8_t FADE_DECAY            = 50; // Trail decay factor (higher = shorter tail)
 
   uint16_t meteorPos[3];
   uint8_t meteorHue = 0;
 
 public:
   ModeId getId() const override { return MODE_PARTY_METEOR_SPARKLE; }
-  const char* getName() const override { return "PartyMeteorSparkle"; }
+  const __FlashStringHelper* getName() const override { return F("PartyMeteorSparkle"); }
 
   void enter(LightContext* ctx) override {
-    FastLED.setBrightness(220);
+    FastLED.setBrightness(brightnessController.getBrightness());
     FastLED.clear();
     FastLED.show();
 
@@ -506,7 +756,7 @@ public:
 class PartyHUEMeteorSparkleState : public LightState {
 private:
   unsigned long lastUpdateMillis = 0;
-  const unsigned long UPDATE_INTERVAL = 20; // 50 FPS fluid party rendering
+  static const unsigned long UPDATE_INTERVAL = 20; // 50 FPS fluid party rendering
 
   // HUE Background Behavior State
   HueBehavior currentBehavior;
@@ -557,12 +807,12 @@ private:
     Serial.println(F("s)"));
   }
 
-  const char* getBehaviorName(HueBehavior b) const {
+  static const __FlashStringHelper* getBehaviorName(HueBehavior b) {
     switch (b) {
-      case HUE_BEHAVIOR_SMOOTH_TRANSITION: return "SmoothHUETransition";
-      case HUE_BEHAVIOR_POLICE_ALARM:      return "RawPoliceAlarmLights";
-      case HUE_BEHAVIOR_SUPERNOVA:         return "Supernova";
-      default:                             return "Unknown";
+      case HUE_BEHAVIOR_SMOOTH_TRANSITION: return F("SmoothHUETransition");
+      case HUE_BEHAVIOR_POLICE_ALARM:      return F("RawPoliceAlarmLights");
+      case HUE_BEHAVIOR_SUPERNOVA:         return F("Supernova");
+      default:                             return F("Unknown");
     }
   }
 
@@ -780,11 +1030,11 @@ private:
 
 public:
   ModeId getId() const override { return MODE_PARTY_HUE_METEOR_SPARKLE; }
-  const char* getName() const override { return "PartyHUEMeteorSparkle"; }
+  const __FlashStringHelper* getName() const override { return F("PartyHUEMeteorSparkle"); }
 
   void enter(LightContext* ctx) override {
     FastLED.setDither(0);
-    FastLED.setBrightness(220);
+    FastLED.setBrightness(brightnessController.getBrightness());
     lastUpdateMillis = 0;
 
     // Initialize meteors with initial scatter along perimeter
@@ -840,10 +1090,11 @@ public:
 };
 
 // ============================================================================
-// 9. State Instances & Context
+// 9. Controller & State Instances
 // ============================================================================
+BrightnessController        brightnessController(PIN_COLOR_POT);
 LightContext                systemContext;
-NormalPulsingWarmWhiteState normalState;
+NormalPulsingWarmWhiteState normalState(brightnessController);
 ConcertSmoothRGBBreathState concertState;
 PartyMeteorSparkleState     partyState;
 PartyHUEMeteorSparkleState  partyHueState;
@@ -897,9 +1148,6 @@ void setup() {
   pinMode(PIN_SWITCH_STEP1, INPUT_PULLUP);
   pinMode(PIN_SWITCH_STEP3, INPUT_PULLUP);
 
-  // Configure color selection potentiometer input
-  pinMode(PIN_COLOR_POT, INPUT);
-
   // Initialize random seed using floating analog line
   randomSeed(analogRead(A0));
 
@@ -907,23 +1155,22 @@ void setup() {
   FastLED.addLeds<SK6812, LED_PIN, GRB>(leds, NUM_LEDS);
   // Disable temporal dithering to eliminate high-frequency 25-50 Hz flicker
   FastLED.setDither(0);
-  // Set fixed brightness ceiling (prevents power supply brownout and dynamic limiter hunting)
-  FastLED.setBrightness(180);
   FastLED.clear();
   FastLED.show();
 
-  // Requirement: Initially start in mode "NormalPulsingWarmWhite"
-  systemContext.transitionTo(&normalState);
+  // Initialize hardware brightness/color controller
+  brightnessController.begin();
 
   // Read initial selector switch position
   currentModeReading = readSelectorHardware(MODE_NORMAL_PULSING_WARM_WHITE);
   lastRawReading     = currentModeReading;
   lastDebounceMillis = millis();
 
-  // If selector is positioned at a different mode on boot, apply it
-  if (currentModeReading != MODE_NORMAL_PULSING_WARM_WHITE) {
-    applyMode(currentModeReading);
-  }
+  // Sample initial potentiometer reading for active mode
+  brightnessController.update(millis(), currentModeReading, true);
+
+  // Apply initial mode based on 3-step switch (defaults to NormalPulsingWarmWhite)
+  applyMode(currentModeReading);
 
   Serial.println(F("Rectangle Light (2.36m x 0.55m, 350 LEDs) Initialized."));
 }
@@ -942,11 +1189,17 @@ void loop() {
   if ((currentMillis - lastDebounceMillis) >= DEBOUNCE_DELAY_MS) {
     if (rawReading != currentModeReading) {
       currentModeReading = rawReading;
+      brightnessController.update(currentMillis, currentModeReading, true);
       applyMode(currentModeReading);
     }
   }
 
-  // 2. Non-blocking update of active lighting mode
+  // 2. Potentiometer reading & brightness update
+  //    - In NormalPulsingWarmWhite: 180°..360° (ADC 512..1023) updates master brightness
+  //    - In Concert and Party modes: 0°..360° (ADC 0..1023) directly updates master brightness
+  brightnessController.update(currentMillis, systemContext.getCurrentModeId());
+
+  // 3. Non-blocking update of active lighting mode
   systemContext.update(currentMillis);
 }
 

@@ -38,19 +38,36 @@ The controller implements three distinct lighting modes using an object-oriented
 
 ### Mode 1: `NormalPulsingWarmWhite` *(Default / Boot Mode)*
 * **Mood & Visual Character**: Cozy architectural mood light with a gentle sinusoidal breathing pulse across the entire frame.
-* **Potentiometer Color Selection (Pin A3)**:
-  An analog potentiometer knob on **Analog Pin A3** allows real-time continuous color selection across three dedicated rotation zones ($0^\circ\text{--}360^\circ$):
-  * **$0^\circ\text{ to }180^\circ$ (ADC $0\text{--}511$) — Full RGB Color Selection**:
-    Smooth continuous 360-degree rainbow spectrum with 16-bit sub-hue interpolation. Sweeps seamlessly from Red through Orange, Yellow, Green, Cyan, Blue, Magenta, and back to Red.
-  * **$180^\circ\text{ to }270^\circ$ (ADC $512\text{--}767$) — Designer Curated Tones**:
-    Continuous blend through three tuned ambient tones:
-    * At $180^\circ$: **`nice-blue`** (rich luminous sapphire blue, `CRGB(10, 95, 255)`)
-    * At $225^\circ$: **`nice-red`** (warm vibrant ruby red, `CRGB(255, 20, 30)`)
-    * At $270^\circ$: **`nice-purple`** (deep royal amethyst purple, `CRGB(175, 25, 240)`)
-  * **$270^\circ\text{ to }360^\circ$ (ADC $768\text{--}1023$) — Tunable White (Cold-White to Warm-White)**:
-    Continuous Correlated Color Temperature (CCT) tuning from crisp daylight cold-white ($\sim 6500\text{K}$, `CRGB(225, 240, 255)`) through neutral white ($\sim 4000\text{K}$) to cozy incandescent tungsten warm-white ($\sim 2700\text{K}$, `CRGB(255, 145, 35)`). Full clockwise ($360^\circ$) restores the original warm white.
+* **Dual-Section Potentiometer Control (Pin A3)**:
+  An analog potentiometer knob on **Analog Pin A3** provides a split-control interface:
+  * **$0^\circ\text{ to }180^\circ$ (ADC $0\text{--}511$) — `ColorController` Section (16 Distinct Steps)**:
+    Divided into 16 discrete steps (32 ADC counts each):
+    * **Step 1**: Cold-White ($\sim 6500\text{K}$ crisp daylight white, `CRGB(230, 245, 255)`)
+    * **Step 2**: Warm-White ($\sim 1900\text{K}$ candlelight warm white, `CRGB(255, 147, 41)`)
+    * **Steps 3..16**: 14 curated HUE steps across the $360^\circ$ chromatic spectrum:
+      1. Step 3: Red (`CHSV(0, 255, 255)`)
+      2. Step 4: Deep Orange (`CHSV(16, 255, 255)`)
+      3. Step 5: Amber Gold (`CHSV(32, 255, 255)`)
+      4. Step 6: Yellow (`CHSV(48, 255, 255)`)
+      5. Step 7: Lime Green (`CHSV(72, 255, 255)`)
+      6. Step 8: Pure Green (`CHSV(96, 255, 255)`)
+      * Step 9: Emerald Teal (`CHSV(116, 255, 255)`)
+      * Step 10: Cyan (`CHSV(136, 255, 255)`)
+      * Step 11: Ocean Blue (`CHSV(156, 255, 255)`)
+      * Step 12: Royal Blue (`CHSV(176, 255, 255)`)
+      * Step 13: Indigo (`CHSV(196, 255, 255)`)
+      * Step 14: Violet / Purple (`CHSV(216, 255, 255)`)
+      * Step 15: Magenta (`CHSV(232, 255, 255)`)
+      * Step 16: Rose Pink (`CHSV(246, 255, 255)`)
+  * **$180^\circ\text{ to }360^\circ$ (ADC $512\text{--}1023$) — `BrightnessController` Section**:
+    Smoothly modulates master brightness from 0% to 100% luminosity (`FastLED.setBrightness(0..255)`). When rotating in the $0^\circ\text{ to }180^\circ$ color-selection zone, brightness remains locked at its active level.
+* **Color Selection Protocol**:
+  1. **Real-Time Preview**: When rotated inside the $0^\circ\text{--}180^\circ$ color zone, the system immediately switches to high brightness (`FastLED.setBrightness(255)`) and displays the selected color across all 350 LEDs.
+  2. **1000ms Stability Commitment**: When the knob remains untouched in the color zone for **1000 ms**, the color is committed to memory as the active breathing color.
+  3. **Visual Confirmation Indication**: An immediate 400 ms double-pulse visual confirmation flash (`blend(baseColor, CRGB::White, 160)`) signals that the selection was accepted.
+  4. **Resume Breathing**: Master brightness is restored to the `BrightnessController` level, and calm breathing resumes in the new color.
 * **Anti-Flicker Hardware Filtering**:
-  4-sample oversampling with deadband and Exponential Moving Average (EMA) filtering eliminates ADC noise and prevents micro-flicker while breathing.
+  4-sample oversampling with 4-count deadband and Exponential Moving Average (EMA) filtering eliminates ADC noise and wiper jitter.
 * **Animation Dynamics**:
   * Employs a low-frequency sinusoidal breathing wave ($\sin$) across the selected color.
   * Brightness gently sways between **40%** (minimum factor 0.40) and **85%** (maximum factor 0.85).
@@ -61,6 +78,8 @@ The controller implements three distinct lighting modes using an object-oriented
 
 ### Mode 2: `ConcertSmoothRGBBreath`
 * **Mood & Visual Character**: Ultra-slow, fluid, and serene ambient illumination designed for music listening, lounge environments, and meditative spaces.
+* **Potentiometer Brightness Control (Pin A3)**:
+  In this mode, the potentiometer knob on **Analog Pin A3** exclusively controls master brightness across the entire $0^\circ\text{ to }360^\circ$ rotation (ADC $0\text{--}1023 \rightarrow 0\text{--}255$), with no color selection or dead zones.
 * **Animation Dynamics**:
   * **Ultra-Slow 300-Second Full RGB Rotation**: The base color wheel rotates through the full $360^\circ$ spectrum over **300 seconds (5 full minutes)** (`COLOR_ROTATION_PERIOD_MS = 300000 ms`).
   * **Super Smooth 16-Bit Sub-Hue Blending**: Uses FastLED's `blend()` with 8-bit fractional interpolation between adjacent integer hues ($65,536$ continuous color micro-steps). Completely eliminates discrete color jumping, ensuring imperceptibly smooth analog-like color drift.
@@ -73,6 +92,8 @@ The controller implements three distinct lighting modes using an object-oriented
 
 ### Mode 3: `PartyHUEMeteorSparkle`
 * **Mood & Visual Character**: Ultra-vibrant, multifaceted party spectacle combining dynamic perimeter meteors, starlight sparkles, and cycling atmospheric background HUE behaviors.
+* **Potentiometer Brightness Control (Pin A3)**:
+  The potentiometer knob on **Analog Pin A3** exclusively controls master brightness across the entire $0^\circ\text{ to }360^\circ$ rotation (ADC $0\text{--}1023 \rightarrow 0\text{--}255$), providing instant, smooth dimming control without altering background behaviors or meteor colors.
 * **Three Cycling HUE Behaviors (Random Order & Random Durations)**:
   * The background continuously transitions through three distinct lighting behaviors, chosen in random order with random durations ($8\text{--}22\text{ seconds}$ each):
     1. **`SmoothHUETransition`**: Fluid, flowing atmospheric ambient rainbow gradient continuously gliding along the 2.36 m rectangular span. Kept at moderate luminance (~35%) to give high contrast for the meteors.
@@ -92,7 +113,7 @@ The controller implements three distinct lighting modes using an object-oriented
 ---
 
 ### Mode 4 (Legacy): `PartyMeteorSparkle`
-* Classic multi-meteor perimeter chase with fading comet tails (`fadeToBlackBy`) and random glitter.
+* Classic multi-meteor perimeter chase with fading comet tails (`fadeToBlackBy`) and random glitter. Potentiometer controls master brightness.
 
 ---
 
@@ -121,12 +142,12 @@ Mode selection is driven directly by a **3-position ON-OFF-ON toggle switch** or
 | **LED Data (DIN)** | `Digital Pin 6` | Output to SK6812 DIN (via a 330–470 $\Omega$ series resistor) |
 | **Switch Step 1** | `Digital Pin 11` | Left switch terminal (`INPUT_PULLUP`) |
 | **Switch Step 3** | `Digital Pin 12` | Right switch terminal (`INPUT_PULLUP`) |
-| **Color Potentiometer** | `Analog Pin A3` | 10k Potentiometer wiper for color selection in `NormalPulsingWarmWhite` |
+| **Dual-Control Potentiometer** | `Analog Pin A3` | 10k Potentiometer wiper. Dual-Section control in `NormalPulsingWarmWhite` (0°..180° ColorController, 180°..360° BrightnessController); full 0°..360° master brightness control in Concert and Party modes |
 | **Floating Seed** | `Analog Pin A0` | Unconnected pin used for `randomSeed(analogRead(A0))` |
 
 ### Power Supply & Injection Guidelines
 * 350 SK6812 LEDs at full white can draw up to $\approx 10.5\text{ A}$ at 5V DC.
-* **Firmware Brightness Ceiling**: The controller configures a steady brightness ceiling (`FastLED.setBrightness(180)`) and disables temporal dithering (`FastLED.setDither(0)`) to eliminate any high-frequency flicker and power-supply hunting.
+* **Firmware Brightness Safety**: The controller initializes brightness safely from the potentiometer setting and disables temporal dithering (`FastLED.setDither(0)`) to eliminate any high-frequency flicker and power-supply hunting.
 * **Power Injection**: For best color uniformity and to prevent voltage drop over the 5.82-meter run, inject 5V DC power at both ends of the strip (or at diagonal corners) from an external 5V regulated power supply (rated for at least 4A–6A). Connect Arduino GND to power supply GND.
 
 ---
@@ -138,6 +159,7 @@ Mode selection is driven directly by a **3-position ON-OFF-ON toggle switch** or
 * **State Machine Pattern**:
   * `LightState`: Abstract base class declaring lifecycle hooks `enter(ctx)` and `update(ctx, currentMillis)`.
   * `LightContext`: Manages current state pointer and handles serial diagnostic transitions.
-  * Dedicated concrete classes: `NormalPulsingWarmWhiteState`, `ConcertSmoothRGBBreathState`, and `PartyMeteorSparkleState`.
+  * Dedicated concrete classes: `NormalPulsingWarmWhiteState`, `ConcertSmoothRGBBreathState`, `PartyHUEMeteorSparkleState`, and `PartyMeteorSparkleState`.
+  * Dedicated input controllers: `ColorController` (16 steps) and `BrightnessController` (EMA-filtered analog input with dual-zone support).
 * **Zero Delay Guarantee**: Every routine is driven by monotonic `millis()` elapsed timers, ensuring smooth frame rates and responsive switch detection at all times.
 
