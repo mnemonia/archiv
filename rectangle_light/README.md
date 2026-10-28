@@ -38,8 +38,8 @@ The controller implements three distinct lighting modes using an object-oriented
 
 ### Mode 1: `NormalPulsingWarmWhite` *(Default / Boot Mode)*
 * **Mood & Visual Character**: Cozy architectural mood light with a gentle sinusoidal breathing pulse across the entire frame.
-* **Dual-Section Potentiometer Control (Pin A3)**:
-  An analog potentiometer knob on **Analog Pin A3** provides a split-control interface:
+* **Dual-Section Potentiometer Control (Pin A2)**:
+  An analog potentiometer knob on **Analog Pin A2** provides a split-control interface:
   * **$0^\circ\text{ to }180^\circ$ (ADC $0\text{--}511$) — `ColorController` Section (16 Distinct Steps)**:
     Divided into 16 discrete steps (32 ADC counts each):
     * **Step 1**: Cold-White ($\sim 6500\text{K}$ crisp daylight white, `CRGB(230, 245, 255)`)
@@ -78,8 +78,8 @@ The controller implements three distinct lighting modes using an object-oriented
 
 ### Mode 2: `ConcertSmoothRGBBreath`
 * **Mood & Visual Character**: Ultra-slow, fluid, and serene ambient illumination designed for music listening, lounge environments, and meditative spaces.
-* **Potentiometer Brightness Control (Pin A3)**:
-  In this mode, the potentiometer knob on **Analog Pin A3** exclusively controls master brightness across the entire $0^\circ\text{ to }360^\circ$ rotation (ADC $0\text{--}1023 \rightarrow 0\text{--}255$), with no color selection or dead zones.
+* **Potentiometer Brightness Control (Pin A2)**:
+  In this mode, the potentiometer knob on **Analog Pin A2** exclusively controls master brightness across the entire $0^\circ\text{ to }360^\circ$ rotation (ADC $0\text{--}1023 \rightarrow 0\text{--}255$), with no color selection or dead zones.
 * **Animation Dynamics**:
   * **Ultra-Slow 300-Second Full RGB Rotation**: The base color wheel rotates through the full $360^\circ$ spectrum over **300 seconds (5 full minutes)** (`COLOR_ROTATION_PERIOD_MS = 300000 ms`).
   * **Super Smooth 16-Bit Sub-Hue Blending**: Uses FastLED's `blend()` with 8-bit fractional interpolation between adjacent integer hues ($65,536$ continuous color micro-steps). Completely eliminates discrete color jumping, ensuring imperceptibly smooth analog-like color drift.
@@ -92,8 +92,8 @@ The controller implements three distinct lighting modes using an object-oriented
 
 ### Mode 3: `PartyHUEMeteorSparkle`
 * **Mood & Visual Character**: Ultra-vibrant, multifaceted party spectacle combining dynamic perimeter meteors, starlight sparkles, and cycling atmospheric background HUE behaviors.
-* **Potentiometer Brightness Control (Pin A3)**:
-  The potentiometer knob on **Analog Pin A3** exclusively controls master brightness across the entire $0^\circ\text{ to }360^\circ$ rotation (ADC $0\text{--}1023 \rightarrow 0\text{--}255$), providing instant, smooth dimming control without altering background behaviors or meteor colors.
+* **Potentiometer Brightness Control (Pin A2)**:
+  The potentiometer knob on **Analog Pin A2** exclusively controls master brightness across the entire $0^\circ\text{ to }360^\circ$ rotation (ADC $0\text{--}1023 \rightarrow 0\text{--}255$), providing instant, smooth dimming control without altering background behaviors or meteor colors.
 * **Three Cycling HUE Behaviors (Random Order & Random Durations)**:
   * The background continuously transitions through three distinct lighting behaviors, chosen in random order with random durations ($8\text{--}22\text{ seconds}$ each):
     1. **`SmoothHUETransition`**: Fluid, flowing atmospheric ambient rainbow gradient continuously gliding along the 2.36 m rectangular span. Kept at moderate luminance (~35%) to give high contrast for the meteors.
@@ -126,7 +126,7 @@ Mode selection is driven directly by a **3-position ON-OFF-ON toggle switch** or
 
 | Switch Position | Pin 11 | Pin 12 | Selected Mode | Notes |
 | :--- | :---: | :---: | :--- | :--- |
-| **Step 1 (Left)** | `LOW` | `HIGH` | **`NormalPulsingWarmWhite`** | Boot default (color controlled via A3 pot) |
+| **Step 1 (Left)** | `LOW` | `HIGH` | **`NormalPulsingWarmWhite`** | Boot default (color controlled via A2 pot) |
 | **Step 2 (Center)** | `HIGH` | `HIGH` | **`ConcertSmoothRGBBreath`** | Open / floating position |
 | **Step 3 (Right)** | `HIGH` | `LOW` | **`PartyHUEMeteorSparkle`** | Switched to GND |
 
@@ -142,7 +142,7 @@ Mode selection is driven directly by a **3-position ON-OFF-ON toggle switch** or
 | **LED Data (DIN)** | `Digital Pin 6` | Output to SK6812 DIN (via a 330–470 $\Omega$ series resistor) |
 | **Switch Step 1** | `Digital Pin 11` | Left switch terminal (`INPUT_PULLUP`) |
 | **Switch Step 3** | `Digital Pin 12` | Right switch terminal (`INPUT_PULLUP`) |
-| **Dual-Control Potentiometer** | `Analog Pin A3` | 10k Potentiometer wiper. Dual-Section control in `NormalPulsingWarmWhite` (0°..180° ColorController, 180°..360° BrightnessController); full 0°..360° master brightness control in Concert and Party modes |
+| **Dual-Control Potentiometer** | `Analog Pin A2` | 10k Potentiometer wiper. Dual-Section control in `NormalPulsingWarmWhite` (0°..180° ColorController, 180°..360° BrightnessController); full 0°..360° master brightness control in Concert and Party modes |
 | **Floating Seed** | `Analog Pin A0` | Unconnected pin used for `randomSeed(analogRead(A0))` |
 
 ### Power Supply & Injection Guidelines

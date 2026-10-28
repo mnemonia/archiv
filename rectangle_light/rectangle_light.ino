@@ -20,7 +20,7 @@
  *   1. NormalPulsingWarmWhite:
  *        Cozy ambient light with a gentle, meditative low-frequency sinusoidal
  *        breathing pulse across the entire frame. Features Dual-Section Potentiometer
- *        Control on Analog Pin A3:
+ *        Control on Analog Pin A2:
  *          -   0° to 180° (ADC   0 ..  511): ColorController section
  *              * Step 1: Cold-White (~6500K crisp daylight white)
  *              * Step 2: Warm-White (~1900K candlelight warm white)
@@ -160,8 +160,8 @@ const int PIN_SWITCH_STEP1 = 11; // Left / Step 1
 const int PIN_SWITCH_STEP3 = 12; // Right / Step 3
                                  // Center / Step 2 = both pins HIGH
 
-// Color selection potentiometer input on Analog Pin A3 (used in NormalPulsingWarmWhiteState)
-const int PIN_COLOR_POT    = A3;
+// Color selection potentiometer input on Analog Pin A2 (used in NormalPulsingWarmWhiteState)
+const int PIN_COLOR_POT    = A2;
 
 // ============================================================================
 // 4. State Machine Base Class
@@ -213,11 +213,11 @@ public:
 };
 
 // ============================================================================
-// 5. Dual-Section Potentiometer Control (Pin A3)
+// 5. Dual-Section Potentiometer Control (Pin A2)
 // ============================================================================
 
 // ----------------------------------------------------------------------------
-// ColorController Class (Analog Pin A3, 0° to 180° / ADC 0 .. 511)
+// ColorController Class (Analog Pin A2, 0° to 180° / ADC 0 .. 511)
 // Maps the first 180° of potentiometer rotation into 16 distinct color steps:
 //   - Step 1: Cold-White (~6500K crisp daylight white)
 //   - Step 2: Warm-White (~1900K candlelight warm white)
@@ -284,7 +284,7 @@ public:
 };
 
 // ----------------------------------------------------------------------------
-// BrightnessController Class (Analog Pin A3)
+// BrightnessController Class (Analog Pin A2)
 // Governs master luminosity:
 //   - In NormalPulsingWarmWhite: 180° to 360° (ADC 512 .. 1023) controls brightness;
 //     below 512 is the ColorController section (brightness locked at active level).
